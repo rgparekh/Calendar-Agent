@@ -4,7 +4,6 @@ import os
 import json
 import logging
 
-# import google.generativeai as genai
 from google import genai
 from google.genai import types
 from google.genai.types import Tool
@@ -231,7 +230,29 @@ def get_calendar_events(credentials, calendar_id, description: str) -> CalendarR
   response_json = json.loads(response.candidates[0].content.parts[0].text)
   logger.info(f"Events List Parameters: {response_json}")
 
-  return response_json
+# Get the events
+  try:
+    service = build("calendar", "v3", credentials=credentials)
+    # Get the events
+    events_result = service.events().list(
+      calendarId=response_json["calendarId"], 
+      timeMin=response_json["timeMin"] if "timeMin" in response_json else None,
+      timeMax=response_json["timeMax"] if "timeMax" in response_json else None,
+      singleEvents=response_json["singleEvents"] if "singleEvents" in response_json else False,
+      orderBy=response_json["orderBy"] if "orderBy" in response_json else None,
+      q=response_json["q"] if "q" in response_json else None
+    ).execute()
+    events = events_result.get('items', [])
+    logger.info(f"Found {len(events)} event(s)")
+  except HttpError as error:
+    logger.error(f"An error occurred: {error}")
+    return CalendarResponse(
+      success=False,
+      message=f"An error occurred: {error}",
+      calendar_link=None
+    )
+
+  return events
 
 # Create a new calendar event
 def create_new_event(credentials, calendar_id, description: str) -> CalendarResponse:
@@ -322,34 +343,10 @@ def delete_event(credentials, calendar_id, description: str, all: bool = False) 
   logger.info("Deleting an existing calendar event")
   logger.info(f"Input text: {description}")
 
-  # Get a list of events that match the description
-  # Note: Only future events are searched while fetching the list of events
+  events = get_calendar_events(credentials, calendar_id, description)
+  logger.info(f"Found {len(events)} event(s)")
+  logger.info(f"Events: {events}")
 
-  # Get the events list parameters
-  events_list_parameters = get_calendar_events(credentials, calendar_id, description)
-  logger.info(f"Events List Parameters: {events_list_parameters}")
-
-  # Get the events
-  try:
-    service = build("calendar", "v3", credentials=credentials)
-    events_result = service.events().list(
-      calendarId=events_list_parameters["calendarId"], 
-      timeMin=events_list_parameters["timeMin"],
-      timeMax=events_list_parameters["timeMax"],
-      singleEvents=events_list_parameters["singleEvents"],
-      orderBy=events_list_parameters["orderBy"],
-      q=events_list_parameters["q"]
-    ).execute()
-    events = events_result.get('items', [])
-    logger.info(f"Found {len(events)} event(s)")
-  except HttpError as error:
-    logger.error(f"An error occurred: {error}")
-    return CalendarResponse(
-      success=False,
-      message=f"An error occurred: {error}",
-      calendar_link=None
-    )
-  
   # Confirm that the user wants to delete the event(s)
   if (len(events) > 0):
     print(f"About to delete the following {len(events)} event(s):")
@@ -393,53 +390,29 @@ def modify_event(credentials, calendar_id, description: str) -> CalendarResponse
   logger.info("Modifying an existing calendar event")
   logger.debug(f"Input text: {description}")
 
-  # Get the events list parameters
-  events_list_parameters = get_calendar_events(credentials, calendar_id, description)
-  logger.info(f"Events List Parameters: {events_list_parameters}")
-  event_calendarId = events_list_parameters["calendarId"]
-  event_timeMin = events_list_parameters["timeMin"] if "timeMin" in events_list_parameters else None
-  event_timeMax = events_list_parameters["timeMax"] if "timeMax" in events_list_parameters else None
-  event_singleEvents = events_list_parameters["singleEvents"] if "singleEvents" in events_list_parameters else False
-  event_orderBy = events_list_parameters["orderBy"] if "orderBy" in events_list_parameters else None
-  event_q = events_list_parameters["q"] if "q" in events_list_parameters else None
+  # Get the events 
+  events=  get_calendar_events(credentials, calendar_id, description)
+  logger.info(f"Found {len(events)} event(s)")
+  logger.info(f"Events: {events}")
 
-  # Get a list of events that match the description of the event to modify
-  try:
-    service = build("calendar", "v3", credentials=credentials)
-    events_result = service.events().list(
-      calendarId=event_calendarId, 
-      timeMin=event_timeMin,
-      timeMax=event_timeMax,
-      singleEvents=event_singleEvents,
-      orderBy=event_orderBy,
-      q=event_q
-    ).execute()
-    events = events_result.get('items', [])
-    logger.info(f"Found {len(events)} event(s)")
-    if len(events) == 0:
-      return CalendarResponse(
-        success=False,
-        message=f"ERROR: No events found for the description '{description}'",
-        calendar_link=None
-      )
-    elif len(events) > 1:
-      return CalendarResponse(
-        success=False,
-        message=f"ERROR: Multiple events found for the description '{description}'. Please make the description more specific.",
-        calendar_link=None
-      )
-    else:
-      event = events[0]
-      logger.info(f"Event to modify: {event['id']}: {event['summary']} from {event['start']['dateTime']} to {event['end']['dateTime']}")
-  except HttpError as error:
-    logger.error(f"An error occurred: {error}")
+  # Check if the event was found
+  if len(events) == 0:
     return CalendarResponse(
       success=False,
-      message=f"An error occurred: {error}",
+      message=f"ERROR: No events found for the description '{description}'",
       calendar_link=None
     )
+  elif len(events) > 1:
+    return CalendarResponse(
+      success=False,
+      message=f"ERROR: Multiple events found for the description '{description}'. Please make the description more specific.",
+      calendar_link=None
+    )
+  else:
+    event = events[0]
+    logger.info(f"Event to modify: {event['id']}: {event['summary']} from {event['start']['dateTime']} to {event['end']['dateTime']}")
 
-  # Determine the event update parameters given the user'sdescription and the event object
+  # Determine the event update parameters given the user's description and the event object
   today = datetime.now()
   date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
 
