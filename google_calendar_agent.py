@@ -540,6 +540,7 @@ def create_annual_event(credentials, calendar_id, description: str) -> CalendarR
         "start": {"date": date_str},
         "end": {"date": end_date_str},
         "recurrence": ["RRULE:FREQ=YEARLY"],
+        "transparency": "transparent",  # show as free for all annual events
         "reminders": {
             "useDefault": False,
             "overrides": [
@@ -549,7 +550,7 @@ def create_annual_event(credentials, calendar_id, description: str) -> CalendarR
         }
     }
 
-    # "birthday" is a recognized eventType in the Google Calendar API; anniversaries use the default
+    # "birthday" is a recognized eventType in the Google Calendar API; anniversaries use the default.
     if event_type == "birthday":
         event_body["eventType"] = "birthday"
 
