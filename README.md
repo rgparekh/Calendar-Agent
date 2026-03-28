@@ -1,20 +1,61 @@
 # Calendar Agent
 
-Google Calendar agent that **creates, searches, modifies, and deletes** events from **natural language**, using the Gemini API and the Google Calendar API. This repo includes a **Streamlit** UI and a Python module you can import from your own scripts.
+Google Calendar agent that **creates, searches, modifies, and deletes meetings, events, and tasks** from **natural language**, using the Gemini API and the Google Calendar and Tasks APIs. This repo includes a **Streamlit** UI and a Python module you can import from your own scripts.
 
 **Repository:** [github.com/rgparekh/Calendar-Agent](https://github.com/rgparekh/Calendar-Agent)
 
 ## Features
 
-- **Streamlit app** (`calendar_agent_ui.py`): home, create, search, modify, delete, and settings
-- **Agent logic** (`google_calendar_agent.py`): classifies intent and drives Calendar operations via structured LLM output
+- **Meetings** — calendar entries with one or more invited attendees (invites are sent via Google Calendar)
+- **Events** — personal calendar entries owned only by you, with no external attendees (e.g. focus blocks, appointments, reminders)
+- **Tasks** — to-do items managed via Google Tasks; no calendar time slot required
+- **Streamlit app** (`calendar_agent_ui.py`): home screen with upcoming events, create, search, modify, delete, and settings pages
+- **Agent logic** (`google_calendar_agent.py`): classifies each request by action (create / modify / delete) and item type (meeting / event / task), then drives the appropriate Google API call via structured LLM output
 - OAuth **token refresh** with recovery if the refresh token is revoked (`invalid_grant`): stale `token.json` is removed and you sign in again
+
+## Natural Language Examples
+
+Just describe what you want in plain English. The agent figures out whether it's a meeting, event, or task and takes the appropriate action.
+
+### Meetings
+
+| Intent | Example prompt |
+|--------|---------------|
+| Create | `Schedule a sync with Alice (alice@co.com) and Bob (bob@co.com) on Friday at 2 PM PT for 1 hour` |
+| Create recurring | `Set up a weekly team standup every Monday at 9 AM with the team (team@co.com) for 30 minutes` |
+| Create with location | `Book a client dinner with Sarah (sarah@client.com) at Nobu on Thursday at 7 PM for 2 hours` |
+| Modify time | `Move the Friday sync with Alice to 3 PM` |
+| Add attendee | `Add Carol (carol@co.com) to the Monday standup` |
+| Delete | `Cancel the client dinner with Sarah on Thursday` |
+
+### Events
+
+| Intent | Example prompt |
+|--------|---------------|
+| Create | `Block my calendar for deep work on Monday from 9 AM to 12 PM PT` |
+| Create | `Add a dentist appointment on March 30 at 10 AM` |
+| Create all-day | `Add a personal day on April 4` |
+| Modify | `Change my dentist appointment to 11 AM` |
+| Modify location | `Update my dentist appointment location to 123 Main St` |
+| Delete | `Remove the focus block on Monday morning` |
+
+### Tasks
+
+| Intent | Example prompt |
+|--------|---------------|
+| Create | `Add a task to submit the Q1 report by end of this week` |
+| Create | `Remind me to buy groceries` |
+| Create with due date | `Add a task to review the project proposal — due Friday` |
+| Modify | `Update the Q1 report task notes to include the finance team review` |
+| Complete | `Mark the grocery task as completed` |
+| Delete | `Delete the task to review the project proposal` |
 
 ## Requirements
 
 - Python 3.10+ (recommended)
 - A [Google Cloud](https://console.cloud.google.com/) project with:
   - **Google Calendar API** enabled
+  - **Google Tasks API** enabled
   - **OAuth consent screen** configured
   - **OAuth 2.0 Client ID** of type **Desktop app** → download as `credentials.json`
 - A **Gemini API key** exposed as `GOOGLE_API_KEY` (used by `google_calendar_agent.py`)
@@ -82,7 +123,7 @@ The first time you use Calendar access, a browser window opens for Google sign-i
 
 - **`invalid_grant` / auth errors:** Delete `token.json` (or use **Settings → Clear Authentication Token** in the UI) and sign in again. Ensure `credentials.json` matches the OAuth client that originally issued the token.
 - **Missing API key:** Set `GOOGLE_API_KEY` before starting Streamlit, or enter it when the app prompts you.
-- **Scope changes:** If you change OAuth scopes in code, remove `token.json` and re-authorize.
+- **Scope changes:** If you change OAuth scopes in code (e.g. adding the Tasks scope), remove `token.json` and re-authorize.
 
 ## License
 
