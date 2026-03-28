@@ -127,4 +127,4 @@ The first time you use Calendar access, a browser window opens for Google sign-i
 
 ## License
 
-Add a `LICENSE` file if you want to specify terms for reuse.
+This project is licensed under the MIT License. See [LICENSE.md](LICENSE.md) for details.
