@@ -80,12 +80,14 @@ class CalendarRequestType(BaseModel):
     action: Literal["new", "modify", "delete", "other"] = Field(
         description="Action to take: new (create), modify (update), delete (remove), or other"
     )
-    item_type: Literal["meeting", "event", "task", "unknown"] = Field(
+    item_type: Literal["meeting", "event", "task", "birthday", "anniversary", "unknown"] = Field(
         description=(
             "Type of item: "
             "'meeting' = calendar event with at least one other attendee invited, "
             "'event' = personal calendar entry owned only by the calendar owner (no external attendees), "
-            "'task' = a to-do item managed via Google Tasks (no specific calendar time slot required)"
+            "'task' = a to-do item managed via Google Tasks (no specific calendar time slot required), "
+            "'birthday' = a yearly recurring all-day birthday event for a specific person, "
+            "'anniversary' = a yearly recurring all-day anniversary event (e.g. wedding, work, or other milestone)"
         )
     )
     confidence_score: float = Field(description="Confidence score between 0 and 1")
@@ -153,6 +155,19 @@ class EventsListParameters(BaseModel):
     singleEvents: bool = Field(default=False, description="Whether to return single events")
     orderBy: Optional[str] = Field(default=None, description="Order by")
     q: Optional[str] = Field(default=None, description="Query")
+
+class AnnualEventDetails(BaseModel):
+    """Extracted details from a birthday or anniversary event request."""
+    summary: str = Field(description=(
+        "Full event title. "
+        "For a birthday use the format \"<Name>'s Birthday\" (e.g. \"Alice's Birthday\"). "
+        "For an anniversary use the format \"<Name(s)>'s <Type> Anniversary\" "
+        "(e.g. \"John and Jane's Wedding Anniversary\", \"Bob's Work Anniversary\")."
+    ))
+    date: str = Field(description="Event date in YYYY-MM-DD format (use current year if no year is specified)")
+    event_type: Literal["birthday", "anniversary"] = Field(
+        description="'birthday' for a person's birthday, 'anniversary' for any other yearly milestone"
+    )
 
 class TaskItem(BaseModel):
     """Details for creating or modifying a Google Task"""
@@ -235,6 +250,10 @@ def determine_calendar_request_type(description: str) -> CalendarRequestType:
              (e.g., a doctor's appointment, gym session, focus block, reminder with a time)
            - 'task': a to-do item managed via Google Tasks — no specific calendar time slot is required
              (e.g., "remind me to buy groceries", "add a task to submit the report")
+           - 'birthday': a yearly recurring all-day birthday event for a specific person
+             (e.g., "Create Alice's birthday on June 15", "Add John's birthday on March 3rd")
+           - 'anniversary': a yearly recurring all-day anniversary event for a person or couple
+             (e.g., "Add our wedding anniversary on July 4", "Create John and Jane's work anniversary on May 1")
         Also extract the cleaned description of the item, removing action keywords like "create", "schedule",
         "add", "delete", "modify", "update", "change".
         Return the action, item_type, cleaned description, and a confidence score between 0 and 1.
@@ -478,6 +497,80 @@ def create_task(credentials, description: str) -> CalendarResponse:
         success=True,
         message=f"Task '{response_json['title']}' created successfully{due_str}",
         calendar_link=None
+    )
+
+
+# Create a new birthday event that repeats yearly
+def create_annual_event(credentials, calendar_id, description: str) -> CalendarResponse:
+    """Create a yearly all-day birthday or anniversary event with default email (1 day) and popup (15 min) reminders."""
+    logger.info("Creating an annual event (birthday or anniversary)")
+    logger.debug(f"Input text: {description}")
+
+    today = datetime.now()
+    date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+
+    config = types.GenerateContentConfig(
+        system_instruction=f"""You are a calendar assistant. {date_context}
+        Extract the event summary, date, and event type (birthday or anniversary) from the description.
+        - For a birthday, format the summary as "<Name>'s Birthday".
+        - For an anniversary, format the summary as "<Name(s)>'s <Type> Anniversary"
+          (e.g. "John and Jane's Wedding Anniversary", "Bob's Work Anniversary").
+        Return the date in YYYY-MM-DD format. Use the current year if no year is specified.
+        """,
+        response_mime_type="application/json",
+        response_schema=AnnualEventDetails
+    )
+
+    contents = [types.Content(role="user", parts=[types.Part(text=description)])]
+
+    response = run_model(model_name, contents, config)
+    details = json.loads(response.candidates[0].content.parts[0].text)
+
+    summary = details["summary"]
+    date_str = details["date"]  # YYYY-MM-DD
+    event_type = details["event_type"]  # "birthday" or "anniversary"
+
+    # All-day events require an end date one day after the start
+    from datetime import timedelta
+    start_date = datetime.strptime(date_str, "%Y-%m-%d")
+    end_date_str = (start_date + timedelta(days=1)).strftime("%Y-%m-%d")
+
+    event_body = {
+        "summary": summary,
+        "start": {"date": date_str},
+        "end": {"date": end_date_str},
+        "recurrence": ["RRULE:FREQ=YEARLY"],
+        "reminders": {
+            "useDefault": False,
+            "overrides": [
+                {"method": "email", "minutes": 1440},  # 1 day before
+                {"method": "popup", "minutes": 15},     # 15 minutes before
+            ]
+        }
+    }
+
+    # "birthday" is a recognized eventType in the Google Calendar API; anniversaries use the default
+    if event_type == "birthday":
+        event_body["eventType"] = "birthday"
+
+    logger.info(f"Annual event body: {event_body}")
+
+    try:
+        service = build("calendar", "v3", credentials=credentials)
+        event = service.events().insert(calendarId=calendar_id, body=event_body).execute()
+        logger.info(f"Annual event created: {event.get('htmlLink')}")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred: {error}",
+            calendar_link=None
+        )
+
+    return CalendarResponse(
+        success=True,
+        message=f"\"{summary}\" created for {date_str}, repeating yearly",
+        calendar_link=event.get("htmlLink")
     )
 
 
@@ -776,6 +869,8 @@ def process_calendar_request(credentials, calendar_id, user_input: str, reminder
     if action == "new":
         if item_type == "task":
             return create_task(credentials, description)
+        elif item_type in ("birthday", "anniversary"):
+            return create_annual_event(credentials, calendar_id, description)
         else:
             # Both "meeting" and "event" use the calendar API; item_type controls attendee handling
             return create_new_event(credentials, calendar_id, description, item_type=item_type, reminders_override=reminders_override)

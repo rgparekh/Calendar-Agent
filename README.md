@@ -9,9 +9,10 @@ Google Calendar agent that **creates, searches, modifies, and deletes meetings, 
 - **Meetings** — calendar entries with one or more invited attendees (invites are sent via Google Calendar)
 - **Events** — personal calendar entries owned only by you, with no external attendees (e.g. focus blocks, appointments, reminders)
 - **Tasks** — to-do items managed via Google Tasks; no calendar time slot required
+- **Birthdays & Anniversaries** — yearly recurring all-day events with automatic email (1 day before) and pop-up (15 minutes before) reminders
 - **Notifications** — email and/or pop-up reminders for meetings and events, configurable to any number of minutes, hours, or days before the item
 - **Streamlit app** (`calendar_agent_ui.py`): home screen with upcoming events, create, search, modify, delete, and settings pages
-- **Agent logic** (`google_calendar_agent.py`): classifies each request by action (create / modify / delete) and item type (meeting / event / task), then drives the appropriate Google API call via structured LLM output
+- **Agent logic** (`google_calendar_agent.py`): classifies each request by action (create / modify / delete) and item type (meeting / event / task / birthday / anniversary), then drives the appropriate Google API call via structured LLM output
 - OAuth **token refresh** with recovery if the refresh token is revoked (`invalid_grant`): stale `token.json` is removed and you sign in again
 
 ## Natural Language Examples
@@ -50,6 +51,44 @@ Just describe what you want in plain English. The agent figures out whether it's
 | Modify | `Update the Q1 report task notes to include the finance team review` |
 | Complete | `Mark the grocery task as completed` |
 | Delete | `Delete the task to review the project proposal` |
+
+### Birthdays & Anniversaries
+
+Birthday and anniversary events are created as **all-day events that repeat every year** on the same date. Both types automatically include two default reminders:
+
+| Reminder | When |
+|----------|------|
+| Email | 1 day before |
+| Pop-up | 15 minutes before |
+
+These reminders are always applied — no extra instructions needed in your prompt.
+
+#### Birthdays
+
+The summary is formatted as **"&lt;Name&gt;'s Birthday"**.
+
+| Example prompt |
+|----------------|
+| `Create Alice's birthday on June 15` |
+| `Add John Smith's birthday on March 3rd` |
+| `Set up a birthday for my mom on October 22` |
+
+#### Anniversaries
+
+The summary is formatted as **"&lt;Name(s)&gt;'s &lt;Type&gt; Anniversary"**. The agent infers the type (wedding, work, etc.) from context, defaulting to "Anniversary" if unspecified.
+
+| Example prompt |
+|----------------|
+| `Add our wedding anniversary on July 4` |
+| `Create John and Jane's wedding anniversary on September 12` |
+| `Add Bob's work anniversary on January 15` |
+| `Create my parents' 30th anniversary on August 20` |
+
+#### How yearly recurrence works
+
+Both types use `RRULE:FREQ=YEARLY`, so they appear on the same calendar date every year without any additional configuration. You only need to create them once.
+
+> **Note:** Birthdays are stored with Google Calendar's native `birthday` event type, which means they appear with the birthday icon in the Google Calendar UI. Anniversaries are stored as standard all-day events.
 
 ### Notifications
 

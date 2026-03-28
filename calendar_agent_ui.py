@@ -270,7 +270,7 @@ def show_home_page(creds, owner_name=""):
     st.markdown("---")
     st.markdown("### 💡 How to Use")
     st.markdown("""
-    1. **Create**: Describe a meeting (with attendees), personal event, or task in natural language
+    1. **Create**: Describe a meeting (with attendees), personal event, task, birthday, or anniversary in natural language
     2. **Search**: Find existing meetings, events, or tasks by description or date
     3. **Modify**: Update any meeting, event, or task by describing the change
     4. **Delete**: Remove meetings, events, or tasks with confirmation
@@ -332,9 +332,11 @@ def show_create_page(creds):
             "Examples:\n"
             "• Meeting: 'Schedule a sync with Alice (alice@co.com) and Bob (bob@co.com) on Friday at 2 PM for 1 hour'\n"
             "• Event: 'Block my calendar for deep work on Monday from 9 AM to 12 PM'\n"
-            "• Task: 'Add a task to submit the Q1 report by end of this week'"
+            "• Task: 'Add a task to submit the Q1 report by end of this week'\n"
+            "• Birthday: 'Create Alice Smith\\'s birthday on June 15'\n"
+            "• Anniversary: 'Add John and Jane\\'s wedding anniversary on July 4'"
         ),
-        height=140
+        height=160
     )
 
     st.markdown("---")
