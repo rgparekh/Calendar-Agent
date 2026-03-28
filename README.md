@@ -9,6 +9,7 @@ Google Calendar agent that **creates, searches, modifies, and deletes meetings, 
 - **Meetings** — calendar entries with one or more invited attendees (invites are sent via Google Calendar)
 - **Events** — personal calendar entries owned only by you, with no external attendees (e.g. focus blocks, appointments, reminders)
 - **Tasks** — to-do items managed via Google Tasks; no calendar time slot required
+- **Notifications** — email and/or pop-up reminders for meetings and events, configurable to any number of minutes, hours, or days before the item
 - **Streamlit app** (`calendar_agent_ui.py`): home screen with upcoming events, create, search, modify, delete, and settings pages
 - **Agent logic** (`google_calendar_agent.py`): classifies each request by action (create / modify / delete) and item type (meeting / event / task), then drives the appropriate Google API call via structured LLM output
 - OAuth **token refresh** with recovery if the refresh token is revoked (`invalid_grant`): stale `token.json` is removed and you sign in again
@@ -49,6 +50,37 @@ Just describe what you want in plain English. The agent figures out whether it's
 | Modify | `Update the Q1 report task notes to include the finance team review` |
 | Complete | `Mark the grocery task as completed` |
 | Delete | `Delete the task to review the project proposal` |
+
+### Notifications
+
+Notifications can be set when **creating or modifying a meeting or event**. Google Tasks does not support notifications via the API.
+
+#### Via the Streamlit UI
+
+On the **Create** or **Modify** page, expand the Notifications section beneath the description field:
+
+1. Check **Email notification** to receive an email reminder, and/or **Pop-up notification** for an on-screen alert.
+2. For each selected type, enter an amount and choose a unit — **minutes**, **hours**, or **days**.
+3. Multiple notification types can be combined (e.g. an email 1 day before and a pop-up 30 minutes before).
+
+#### Via natural language (CLI or UI description field)
+
+You can also describe reminders directly in your prompt. The agent extracts the notification details automatically:
+
+| Intent | Example prompt |
+|--------|---------------|
+| Email only | `Schedule a dentist appointment on Friday at 10 AM — email me 1 day before` |
+| Pop-up only | `Add a focus block Monday 9–12 PM with a pop-up reminder 15 minutes before` |
+| Both types | `Book a team sync with Alice (alice@co.com) tomorrow at 2 PM — email 1 day before and pop-up 30 minutes before` |
+| Modify reminders | `Add a pop-up reminder 1 hour before the Monday standup` |
+
+#### How notifications work
+
+| Setting | Delivered as |
+|---------|-------------|
+| Email | An email sent to the calendar owner's Google account address |
+| Pop-up | An alert shown in Google Calendar (web and mobile) |
+| Time before | Any value expressed in minutes; the UI converts hours and days automatically (1 hour = 60 min, 1 day = 1440 min) |
 
 ## Requirements
 
