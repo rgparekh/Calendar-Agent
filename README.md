@@ -160,13 +160,31 @@ You can also describe reminders directly in your prompt. The agent extracts the 
    | `credentials.json` | OAuth client secret from Google Cloud Console (Desktop client) |
    | `GOOGLE_API_KEY` | Gemini API key for the agent |
 
-   Example (current shell only):
+   Create a `.env` file in the project root with the following contents:
+
+   ```env
+   # Gemini API key — required by google_calendar_agent.py
+   # Obtain from: https://aistudio.google.com/app/apikey
+   GOOGLE_API_KEY=your-gemini-api-key
+   ```
+
+   Then load it before starting the app:
+
+   ```bash
+   source .env          # bash/zsh (simple key=value format)
+   # or
+   export $(cat .env | grep -v '^#' | xargs)
+   ```
+
+   Alternatively, set it for the current shell only:
 
    ```bash
    export GOOGLE_API_KEY="your-gemini-api-key"
    ```
 
-   Or use a `.env` file with your preferred loader; the Streamlit UI also lets you paste the API key once if the variable is unset.
+   The Streamlit UI also lets you paste the API key directly in the browser if the variable is unset.
+
+   > **Never commit `.env` or `credentials.json` to version control.** Both are listed in `.gitignore`.
 
 5. **Place `credentials.json`** in the project root (same directory as `calendar_agent_ui.py`).
 
