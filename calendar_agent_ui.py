@@ -337,31 +337,6 @@ def show_create_page(creds):
         height=140
     )
 
-    # Quick templates
-    st.markdown("### 📝 Quick Templates")
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        if st.button("👥 Team Meeting", use_container_width=True):
-            st.session_state.create_description = (
-                "Schedule a team meeting with the team (team@company.com) tomorrow at 10 AM for 1 hour"
-            )
-    with col2:
-        if st.button("📅 Focus Block", use_container_width=True):
-            st.session_state.create_description = (
-                "Block my calendar for deep work on Monday from 9 AM to 12 PM"
-            )
-    with col3:
-        if st.button("✅ Task", use_container_width=True):
-            st.session_state.create_description = (
-                "Add a task to review the project proposal by Friday"
-            )
-
-    # Apply template if selected
-    if "create_description" in st.session_state:
-        description = st.session_state.create_description
-        del st.session_state.create_description
-
     st.markdown("---")
     reminders = render_notification_controls("create")
 
