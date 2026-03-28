@@ -90,6 +90,29 @@ class CalendarRequestType(BaseModel):
     )
     confidence_score: float = Field(description="Confidence score between 0 and 1")
 
+class ReminderOverride(BaseModel):
+    """A single calendar notification rule."""
+    method: Literal["email", "popup"] = Field(
+        description="Notification method: 'email' sends an email, 'popup' shows an on-screen alert"
+    )
+    minutes: int = Field(
+        description=(
+            "Minutes before the event to deliver the notification. "
+            "Examples: 10 = 10 minutes, 60 = 1 hour, 1440 = 1 day, 10080 = 1 week."
+        )
+    )
+
+class EventReminders(BaseModel):
+    """Reminder/notification settings for a calendar event."""
+    useDefault: bool = Field(
+        default=False,
+        description="If True, use the calendar's default reminders. Set to False when specifying overrides."
+    )
+    overrides: list[ReminderOverride] = Field(
+        default=[],
+        description="Explicit reminder rules. Only used when useDefault is False."
+    )
+
 class NewEventDetails(BaseModel):
     """Details for creating a new calendar meeting or event"""
     summary: str = Field(description="Summary of the event")
@@ -100,6 +123,13 @@ class NewEventDetails(BaseModel):
     recurrence: list[str] = Field(default=[], description="Recurrence rules")
     attendees: list[EmailAddress] = Field(
         description="List of attendee objects with fields email. Empty list for personal events."
+    )
+    reminders: Optional[EventReminders] = Field(
+        default=None,
+        description=(
+            "Notification settings. Populate only when the user requests specific reminders. "
+            "Set useDefault=False and list each override with method ('email' or 'popup') and minutes."
+        )
     )
 
 # TODO: Determine if this data model is needed
@@ -317,7 +347,7 @@ def get_tasks(credentials, description: str) -> list:
 
 
 # Create a new calendar meeting or personal event
-def create_new_event(credentials, calendar_id, description: str, item_type: str = "event") -> CalendarResponse:
+def create_new_event(credentials, calendar_id, description: str, item_type: str = "event", reminders_override: Optional[dict] = None) -> CalendarResponse:
     """Create a new calendar meeting (with attendees) or personal event (no attendees)."""
     logger.info(f"Creating a new calendar {item_type}")
     logger.debug(f"Input text: {description}")
@@ -355,7 +385,9 @@ def create_new_event(credentials, calendar_id, description: str, item_type: str 
         - end: object with dateTime (local, no Z) and timeZone (IANA name)
         - recurrence: array of strings
         - attendees: array of objects with email field
-        - reminders: object with useDefault and overrides
+        - reminders: object with useDefault (bool) and overrides (array of objects with method and minutes).
+          Only populate reminders if the user explicitly requests notifications; otherwise omit it.
+          Example: {{"useDefault": false, "overrides": [{{"method": "email", "minutes": 1440}}, {{"method": "popup", "minutes": 30}}]}}
         Do not include any other fields or properties.
         """,
         response_mime_type="application/json",
@@ -368,6 +400,11 @@ def create_new_event(credentials, calendar_id, description: str, item_type: str 
 
     response = run_model(model_name, contents, config)
     response_json = json.loads(response.candidates[0].content.parts[0].text)
+
+    # UI-supplied reminders take precedence over LLM-extracted reminders
+    if reminders_override is not None:
+        response_json["reminders"] = reminders_override
+        logger.info(f"Reminders override applied: {reminders_override}")
 
     logger.info(f"New calendar {item_type}: {response_json}")
 
@@ -547,7 +584,7 @@ def delete_task(credentials, description: str, all: bool = False) -> CalendarRes
 
 
 # Modify an existing calendar event given the user's description
-def modify_event(credentials, calendar_id, description: str) -> CalendarResponse:
+def modify_event(credentials, calendar_id, description: str, reminders_override: Optional[dict] = None) -> CalendarResponse:
     """Modify an existing calendar meeting or event."""
     logger.info("Modifying an existing calendar event")
     logger.debug(f"Input text: {description}")
@@ -594,7 +631,9 @@ def modify_event(credentials, calendar_id, description: str) -> CalendarResponse
         - end: object with dateTime (local, no Z) and timeZone (IANA name)
         - recurrence: array of strings
         - attendees: array of objects with email field
-        - reminders: object with useDefault and overrides
+        - reminders: object with useDefault (bool) and overrides (array of objects with method and minutes).
+          Only include reminders if the user explicitly requests a notification change.
+          Example: {{"useDefault": false, "overrides": [{{"method": "email", "minutes": 1440}}, {{"method": "popup", "minutes": 30}}]}}
         Do not include any other fields or properties.
         """,
         response_mime_type="application/json",
@@ -607,6 +646,11 @@ def modify_event(credentials, calendar_id, description: str) -> CalendarResponse
 
     response = run_model(model_name, contents, config)
     response_json = json.loads(response.candidates[0].content.parts[0].text)
+
+    # UI-supplied reminders take precedence over LLM-extracted reminders
+    if reminders_override is not None:
+        response_json["reminders"] = reminders_override
+        logger.info(f"Reminders override applied: {reminders_override}")
 
     logger.info(f"Update calendar event: {response_json}")
 
@@ -705,7 +749,7 @@ def modify_task(credentials, description: str) -> CalendarResponse:
 # Step 3: Route the calendar/task request to the appropriate handler
 # ---------------------------------------------------------------------------------
 
-def process_calendar_request(credentials, calendar_id, user_input: str) -> Optional[CalendarResponse]:
+def process_calendar_request(credentials, calendar_id, user_input: str, reminders_override: Optional[dict] = None) -> Optional[CalendarResponse]:
     """Process an incoming calendar or task request and route to the correct handler."""
     logger.info(f"Processing request: {user_input}")
 
@@ -734,13 +778,13 @@ def process_calendar_request(credentials, calendar_id, user_input: str) -> Optio
             return create_task(credentials, description)
         else:
             # Both "meeting" and "event" use the calendar API; item_type controls attendee handling
-            return create_new_event(credentials, calendar_id, description, item_type=item_type)
+            return create_new_event(credentials, calendar_id, description, item_type=item_type, reminders_override=reminders_override)
 
     elif action == "modify":
         if item_type == "task":
             return modify_task(credentials, description)
         else:
-            return modify_event(credentials, calendar_id, description)
+            return modify_event(credentials, calendar_id, description, reminders_override=reminders_override)
 
     elif action == "delete":
         if item_type == "task":

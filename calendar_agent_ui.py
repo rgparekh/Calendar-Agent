@@ -5,6 +5,7 @@ import os
 import json
 import logging
 from datetime import datetime, timezone, timedelta
+from typing import Optional
 
 # Import calendar agent functions
 from google_calendar_agent import (
@@ -276,6 +277,47 @@ def show_home_page(creds, owner_name=""):
     """)
 
 
+def render_notification_controls(key_prefix: str) -> Optional[dict]:
+    """Render email and popup notification controls.
+
+    Returns a reminders dict ready for the Google Calendar API, e.g.:
+        {"useDefault": False, "overrides": [{"method": "email", "minutes": 1440}]}
+    Returns None when the user has not selected any notifications.
+    Notifications are not supported for tasks.
+    """
+    st.markdown("### 🔔 Notifications")
+    st.caption("Supported for meetings and events. Not available for tasks.")
+
+    unit_to_minutes = {"minutes": 1, "hours": 60, "days": 1440}
+    overrides = []
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        email_on = st.checkbox("Email notification", key=f"{key_prefix}_email_on")
+        if email_on:
+            amt_col, unit_col = st.columns(2)
+            with amt_col:
+                email_amt = st.number_input("Amount", min_value=1, value=1, key=f"{key_prefix}_email_amt")
+            with unit_col:
+                email_unit = st.selectbox("Unit", ["days", "hours", "minutes"], key=f"{key_prefix}_email_unit")
+            overrides.append({"method": "email", "minutes": int(email_amt * unit_to_minutes[email_unit])})
+
+    with col2:
+        popup_on = st.checkbox("Pop-up notification", key=f"{key_prefix}_popup_on")
+        if popup_on:
+            amt_col, unit_col = st.columns(2)
+            with amt_col:
+                popup_amt = st.number_input("Amount", min_value=1, value=30, key=f"{key_prefix}_popup_amt")
+            with unit_col:
+                popup_unit = st.selectbox("Unit", ["minutes", "hours", "days"], key=f"{key_prefix}_popup_unit")
+            overrides.append({"method": "popup", "minutes": int(popup_amt * unit_to_minutes[popup_unit])})
+
+    if overrides:
+        return {"useDefault": False, "overrides": overrides}
+    return None
+
+
 def show_create_page(creds):
     """Page for creating new meetings, events, or tasks."""
     st.markdown("## ➕ Create Meeting, Event, or Task")
@@ -320,13 +362,16 @@ def show_create_page(creds):
         description = st.session_state.create_description
         del st.session_state.create_description
 
+    st.markdown("---")
+    reminders = render_notification_controls("create")
+
     if st.button("🚀 Create", type="primary", use_container_width=True):
         if not description.strip():
             st.error("❌ Please enter a description.")
         else:
             with st.spinner("Processing your request..."):
                 try:
-                    result = process_calendar_request(creds, "primary", description)
+                    result = process_calendar_request(creds, "primary", description, reminders_override=reminders)
                     if result and result.success:
                         st.success("✅ Created successfully!")
                         st.markdown(f"**Message:** {result.message}")
@@ -445,13 +490,16 @@ def show_modify_page(creds):
         height=120
     )
 
+    st.markdown("---")
+    reminders = render_notification_controls("modify")
+
     if st.button("✏️ Apply Modification", type="primary", use_container_width=True):
         if not description.strip():
             st.error("❌ Please enter a description.")
         else:
             with st.spinner("Applying modification..."):
                 try:
-                    result = process_calendar_request(creds, "primary", description)
+                    result = process_calendar_request(creds, "primary", description, reminders_override=reminders)
                     if result and result.success:
                         st.success("✅ Modified successfully!")
                         st.markdown(f"**Message:** {result.message}")
