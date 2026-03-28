@@ -1,0 +1,24 @@
+# Secrets & tokens
+.env
+credentials.json
+token.json
+google_calendar_client_id.txt
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.envrc
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Streamlit
+.streamlit/secrets.toml
