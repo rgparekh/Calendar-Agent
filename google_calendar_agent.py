@@ -1,4 +1,4 @@
-# Agentic workflow to manage Google calendar events
+# Agentic workflow to manage Google calendar meetings, events, and tasks
 
 import os
 import json
@@ -18,7 +18,10 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
+]
 
 # Set up logging configuration
 logging.basicConfig(
@@ -46,79 +49,101 @@ class EventDateTime(BaseModel):
     """
     Represents the date and time of a Google Calendar event.
     """
-    dateTime: Optional[datetime] = Field(
+    dateTime: Optional[str] = Field(
         None,
         description=(
-            "The time, as a combined date-time value (formatted according to RFC3339). "
-            "A time zone offset is required unless a time zone is explicitly specified in timeZone."
+            "The local date-time in 'YYYY-MM-DDTHH:MM:SS' format (no Z, no UTC offset). "
+            "The timeZone field tells the Google Calendar API how to interpret this local time. "
+            "NEVER append 'Z' or any UTC offset — doing so overrides timeZone and shifts the event to the wrong time."
         ),
     )
     timeZone: Optional[str] = Field(
         None,
         description=(
-            "The time zone in which the time is specified (formatted as an IANA Time Zone Database name, e.g. 'Europe/Zurich'). "
+            "The time zone in which the time is specified (formatted as an IANA Time Zone Database name, e.g. 'America/Los_Angeles'). "
             "For recurring events this field is required and specifies the time zone in which the recurrence is expanded. "
             "For single events this field is optional and indicates a custom time zone for the event start/end."
         ),
-    ) 
+    )
 
 class CalendarEvent(BaseModel):
-  """Using the event description determine if it a calendar event"""
-  description: str = Field(description="Text describing the event ")
-  is_calendar_event: bool = Field(description="Whether this text describes a calendar event") 
-  confidence_score: float = Field(description="Confidence score between 0 and 1")
+    """Determine whether the request describes a calendar meeting, event, or task."""
+    description: str = Field(description="Text describing the request")
+    is_calendar_event: bool = Field(
+        description="True if this is a calendar meeting, event, or task request"
+    )
+    confidence_score: float = Field(description="Confidence score between 0 and 1")
 
 class CalendarRequestType(BaseModel):
-  """Determine if the Calendar Request is for a new event, modification of an existing event, or deletion of an existing event"""
-  description: str = Field(description="Text describing the event ")
-  event_type: Literal["new_event", "modify_event", "delete_event", "other"] = Field(
-    description="Type of calendar event - new_event, modify_event, delete_event, other"
-  )
-  confidence_score: float = Field(description="Confidence score between 0 and 1")
+    """Classify the action and item type of a calendar/task request."""
+    description: str = Field(description="Text describing the request, stripped of action keywords")
+    action: Literal["new", "modify", "delete", "other"] = Field(
+        description="Action to take: new (create), modify (update), delete (remove), or other"
+    )
+    item_type: Literal["meeting", "event", "task", "unknown"] = Field(
+        description=(
+            "Type of item: "
+            "'meeting' = calendar event with at least one other attendee invited, "
+            "'event' = personal calendar entry owned only by the calendar owner (no external attendees), "
+            "'task' = a to-do item managed via Google Tasks (no specific calendar time slot required)"
+        )
+    )
+    confidence_score: float = Field(description="Confidence score between 0 and 1")
 
 class NewEventDetails(BaseModel):
-  """Details for creating a new calendar event"""
-  summary: str = Field(description="Summary of the event")
-  location: str = Field(description="Location of the event")
-  description: str = Field(description="Description of the event")
-  start: EventDateTime = Field(description="Start time object with fields dateTime and timeZone")
-  end: EventDateTime = Field(description="End time object with fields dateTime and timeZone")
-  recurrence: list[str] = Field(default=[], description="Recurrence rules")
-  attendees: list[EmailAddress] = Field(
-    description="List of attendee objects with fields email"
-  )
+    """Details for creating a new calendar meeting or event"""
+    summary: str = Field(description="Summary of the event")
+    location: str = Field(description="Location of the event")
+    description: str = Field(description="Description of the event")
+    start: EventDateTime = Field(description="Start time object with fields dateTime and timeZone")
+    end: EventDateTime = Field(description="End time object with fields dateTime and timeZone")
+    recurrence: list[str] = Field(default=[], description="Recurrence rules")
+    attendees: list[EmailAddress] = Field(
+        description="List of attendee objects with fields email. Empty list for personal events."
+    )
 
 # TODO: Determine if this data model is needed
 class ModifyEventDetails(BaseModel):
-  """Details for creating a new calendar event"""
-  summary: Optional[str] = Field(default=None, description="Summary of the event")
-  location: Optional[str] = Field(description="Location of the event")
-  description: Optional[str] = Field(description="Description of the event")
-  start: Optional[EventDateTime] = Field(description="Start time object with fields dateTime and timeZone")
-  end: Optional[EventDateTime] = Field(default=None, description="End time object with fields dateTime and timeZone")
-  recurrence: Optional[list[str]] = Field(default=[], description="Recurrence rules")
-  attendees: Optional[list[EmailAddress]] = Field(
-    description="List of attendee objects with fields email"
-  )
+    """Details for modifying an existing calendar event"""
+    summary: Optional[str] = Field(default=None, description="Summary of the event")
+    location: Optional[str] = Field(description="Location of the event")
+    description: Optional[str] = Field(description="Description of the event")
+    start: Optional[EventDateTime] = Field(description="Start time object with fields dateTime and timeZone")
+    end: Optional[EventDateTime] = Field(default=None, description="End time object with fields dateTime and timeZone")
+    recurrence: Optional[list[str]] = Field(default=[], description="Recurrence rules")
+    attendees: Optional[list[EmailAddress]] = Field(
+        description="List of attendee objects with fields email"
+    )
 
 class EventsListParameters(BaseModel):
-  """Parameters for listing events"""
-  calendarId: str = Field(description="Calendar ID")
-  timeMin: Optional[datetime] = Field(default=None, description="Start time")
-  timeMax: Optional[datetime] = Field(default=None, description="End time")
-  singleEvents: bool = Field(default=False, description="Whether to return single events")
-  orderBy: Optional[str] = Field(default=None, description="Order by") 
-  q: Optional[str] = Field(default=None, description="Query")
+    """Parameters for listing calendar events"""
+    calendarId: str = Field(description="Calendar ID")
+    timeMin: Optional[str] = Field(default=None, description="Start time in RFC3339 format (e.g. '2026-03-29T00:00:00Z')")
+    timeMax: Optional[str] = Field(default=None, description="End time in RFC3339 format (e.g. '2026-03-29T23:59:59Z')")
+    singleEvents: bool = Field(default=False, description="Whether to return single events")
+    orderBy: Optional[str] = Field(default=None, description="Order by")
+    q: Optional[str] = Field(default=None, description="Query")
+
+class TaskItem(BaseModel):
+    """Details for creating or modifying a Google Task"""
+    title: str = Field(description="Title of the task")
+    notes: Optional[str] = Field(default=None, description="Notes or description of the task")
+    due: Optional[str] = Field(
+        default=None,
+        description="Due date in RFC 3339 timestamp format, e.g. '2026-03-28T00:00:00.000Z'"
+    )
+    status: Optional[Literal["needsAction", "completed"]] = Field(
+        default="needsAction", description="Status of the task"
+    )
 
 class CalendarResponse(BaseModel):
     """Final response format"""
-
     success: bool = Field(description="Whether the operation was successful")
     message: str = Field(description="User-friendly response message")
     calendar_link: Optional[str] = Field(description="Calendar link if applicable")
 
 # Invoke the GenAI (Gemini) model and return its response
-def run_model(model_name, contents, config):    
+def run_model(model_name, contents, config):
     response = client.models.generate_content(
         model=model_name,
         contents=contents,
@@ -127,86 +152,98 @@ def run_model(model_name, contents, config):
     return response
 
 # --------------------------------------------------------------
-# Step 2: Define the functions to process the calendar events
+# Step 2: Define the functions to process calendar/task requests
 # --------------------------------------------------------------
 
-# Check if the user's description is a calendar event
+# Check if the user's description is a calendar meeting, event, or task
 def check_if_calendar_event(description: str) -> CalendarEvent:
-  """Check if the description is a calendar event"""
-  logger.info("Checking if the description is a calendar event")
-  logger.debug(f"Input text: {description}")
-  
-  config = types.GenerateContentConfig(
-    system_instruction = f"""You are a calendar event manager. 
-      Determine if the incoming request is for a calendar event or not.
-      Return a boolean response along with a confidence score between 0 and 1.
-    """,
-    response_mime_type = "application/json",
-    response_schema = CalendarEvent
-  )
-  
-  contents = [
-    types.Content(
-      role="user", parts=[types.Part(text=description)]
+    """Check if the description is a calendar meeting, event, or task request."""
+    logger.info("Checking if the description is a calendar/task request")
+    logger.debug(f"Input text: {description}")
+
+    config = types.GenerateContentConfig(
+        system_instruction="""You are a calendar and task manager.
+        Determine if the incoming request is for a calendar meeting, calendar event, or task.
+        - A meeting is a calendar event that involves inviting at least one other person.
+        - An event is a personal calendar entry (appointment, reminder, block time) with no external attendees.
+        - A task is a to-do item that may or may not have a due date but does not occupy a calendar time slot.
+        Return True for is_calendar_event if the request is for any of these three types.
+        Return a confidence score between 0 and 1.
+        """,
+        response_mime_type="application/json",
+        response_schema=CalendarEvent
     )
-  ]
-  
-  response = run_model(model_name, contents, config)
-  response_json = json.loads(response.candidates[0].content.parts[0].text)
 
-  logger.info(
-    f"Extraction complete - Is calendar event: {response_json["is_calendar_event"]}, Confidence: {response_json["confidence_score"]:.2f}"
-  )
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
 
-  return response_json  
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
 
-# Determine the type of calendar request - new_event, modify_event, delete_event, other
+    logger.info(
+        f"Extraction complete - Is calendar/task request: {response_json['is_calendar_event']}, "
+        f"Confidence: {response_json['confidence_score']:.2f}"
+    )
+
+    return response_json
+
+
+# Classify the action and item type of the request
 def determine_calendar_request_type(description: str) -> CalendarRequestType:
-  """Determine the type of calendar request: new_event, modify_event, delete_event, other"""
-  logger.info("Determining the type of calendar request")
-  logger.debug(f"Input text: {description}")
-  
-  config = types.GenerateContentConfig(
-    system_instruction = f"""You are a calendar event manager. 
-      Determine if the incoming request is a calendar event request.
-      If so, determine the type of request: new_event, modify_event, delete_event, other.
-      In each case, extract the description of the event without the name of the action to take.
-      Return the type of the request along with a confidence score between 0 and 1.
-    """,
-    response_mime_type = "application/json",
-    response_schema = CalendarRequestType
-  )
-  
-  contents = [
-    types.Content(
-      role="user", parts=[types.Part(text=description)]
+    """Classify the action (new/modify/delete) and item type (meeting/event/task)."""
+    logger.info("Determining the type of calendar/task request")
+    logger.debug(f"Input text: {description}")
+
+    config = types.GenerateContentConfig(
+        system_instruction="""You are a calendar and task manager.
+        Given the user's request, determine:
+        1. The ACTION: new (create something), modify (update something), delete (remove something), or other.
+        2. The ITEM TYPE:
+           - 'meeting': a calendar event where at least one other person is invited (emails or names of attendees are mentioned)
+           - 'event': a personal calendar entry owned only by the calendar owner with no external attendees
+             (e.g., a doctor's appointment, gym session, focus block, reminder with a time)
+           - 'task': a to-do item managed via Google Tasks — no specific calendar time slot is required
+             (e.g., "remind me to buy groceries", "add a task to submit the report")
+        Also extract the cleaned description of the item, removing action keywords like "create", "schedule",
+        "add", "delete", "modify", "update", "change".
+        Return the action, item_type, cleaned description, and a confidence score between 0 and 1.
+        """,
+        response_mime_type="application/json",
+        response_schema=CalendarRequestType
     )
-  ]
 
-  response = run_model(model_name, contents, config)
-  response_json = json.loads(response.candidates[0].content.parts[0].text)
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
 
-  logger.info(
-    f"Extraction complete - Is calendar event: {response_json["event_type"]}, Confidence: {response_json["confidence_score"]:.2f}"
-  )
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
 
-  return response_json
+    logger.info(
+        f"Extraction complete - Action: {response_json['action']}, "
+        f"Item type: {response_json['item_type']}, "
+        f"Confidence: {response_json['confidence_score']:.2f}"
+    )
+
+    return response_json
+
 
 # Get a list of calendar events given the user's description
-def get_calendar_events(credentials, calendar_id, description: str) -> CalendarResponse:
-  """Get a list of calendar events"""
-  logger.info("Getting a list of calendar events")
-  logger.debug(f"Input text: {description}")
-  
-  today = datetime.now()
-  date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+def get_calendar_events(credentials, calendar_id, description: str) -> list:
+    """Get a list of calendar events (meetings or personal events)."""
+    logger.info("Getting a list of calendar events")
+    logger.debug(f"Input text: {description}")
 
-  config = types.GenerateContentConfig(
-        system_instruction = f"""You are an expert Google calendar manager. 
-        Given the {date_context} build a JSON object to fetch the Google calendar events referenced to in the description.
-        If no start date is specified then use today at 12:00 AM as timeMin. 
+    today = datetime.now()
+    date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+
+    config = types.GenerateContentConfig(
+        system_instruction=f"""You are an expert Google calendar manager.
+        Given the {date_context} build a JSON object to fetch the Google calendar events referenced in the description.
+        If no start date is specified then use today at 12:00 AM as timeMin.
         Do not create a default timeMax. Only populate timeMax if the description specifies an end date.
-        The q field should contain the text from the description that would be in the summary of the Google calendar event. 
+        The q field should contain the text from the description that would be in the summary of the Google calendar event.
         Return ONLY the relevant fields from the following list in JSON format:
         - calendarId: string
         - timeMin: datetime
@@ -216,339 +253,555 @@ def get_calendar_events(credentials, calendar_id, description: str) -> CalendarR
         - q: string
         Do not include any other fields or properties.
         """,
-        response_mime_type = "application/json",
-        response_schema = EventsListParameters
+        response_mime_type="application/json",
+        response_schema=EventsListParameters
     )
 
-  contents = [
-    types.Content(
-      role="user", parts=[types.Part(text=description)]
-    )
-  ] 
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
 
-  response = run_model(model_name, contents, config)
-  response_json = json.loads(response.candidates[0].content.parts[0].text)
-  logger.info(f"Events List Parameters: {response_json}")
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    logger.info(f"Events List Parameters: {response_json}")
 
-# Get the events
-  try:
-    service = build("calendar", "v3", credentials=credentials)
-    # Get the events
-    events_result = service.events().list(
-      calendarId=response_json["calendarId"], 
-      timeMin=response_json["timeMin"] if "timeMin" in response_json else None,
-      timeMax=response_json["timeMax"] if "timeMax" in response_json else None,
-      singleEvents=response_json["singleEvents"] if "singleEvents" in response_json else False,
-      orderBy=response_json["orderBy"] if "orderBy" in response_json else None,
-      q=response_json["q"] if "q" in response_json else None
-    ).execute()
-    events = events_result.get('items', [])
-    logger.info(f"Found {len(events)} event(s)")
-  except HttpError as error:
-    logger.error(f"An error occurred: {error}")
-    return CalendarResponse(
-      success=False,
-      message=f"An error occurred: {error}",
-      calendar_link=None
-    )
+    try:
+        service = build("calendar", "v3", credentials=credentials)
+        events_result = service.events().list(
+            calendarId=response_json["calendarId"],
+            timeMin=response_json.get("timeMin"),
+            timeMax=response_json.get("timeMax"),
+            singleEvents=response_json.get("singleEvents", False),
+            orderBy=response_json.get("orderBy"),
+            q=response_json.get("q")
+        ).execute()
+        events = events_result.get("items", [])
+        logger.info(f"Found {len(events)} event(s)")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return []
 
-  return events
+    return events
 
-# Create a new calendar event
-def create_new_event(credentials, calendar_id, description: str) -> CalendarResponse:
-  """Create a new calendar event"""
-  logger.info("Creating a new calendar event")
-  logger.debug(f"Input text: {description}")
 
-  today = datetime.now()
-  date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+# Get a list of Google Tasks matching the description
+def get_tasks(credentials, description: str) -> list:
+    """Get a list of Google Tasks from the default task list."""
+    logger.info("Getting a list of Google Tasks")
+    logger.debug(f"Input text: {description}")
 
-  config = types.GenerateContentConfig(
-        system_instruction = f"""You are a calendar event manager. 
-        Given the {date_context} create a new calendar event based on the description.
+    try:
+        service = build("tasks", "v1", credentials=credentials)
+        tasks_result = service.tasks().list(
+            tasklist="@default",
+            showCompleted=False,
+            showDeleted=False
+        ).execute()
+        tasks = tasks_result.get("items", [])
+        logger.info(f"Found {len(tasks)} task(s) total")
+
+        # Filter by description if it's not a generic "all tasks" request
+        if description and description.lower() not in ("all tasks", "all", ""):
+            filtered = [
+                t for t in tasks
+                if description.lower() in t.get("title", "").lower()
+                or description.lower() in t.get("notes", "").lower()
+            ]
+            logger.info(f"Filtered to {len(filtered)} task(s) matching '{description}'")
+            return filtered
+
+        return tasks
+    except HttpError as error:
+        logger.error(f"An error occurred fetching tasks: {error}")
+        return []
+
+
+# Create a new calendar meeting or personal event
+def create_new_event(credentials, calendar_id, description: str, item_type: str = "event") -> CalendarResponse:
+    """Create a new calendar meeting (with attendees) or personal event (no attendees)."""
+    logger.info(f"Creating a new calendar {item_type}")
+    logger.debug(f"Input text: {description}")
+
+    today = datetime.now()
+    date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+
+    if item_type == "meeting":
+        attendee_instruction = (
+            "This is a MEETING — populate the attendees list with all people mentioned in the description. "
+            "At least one attendee email must be included."
+        )
+    else:
+        attendee_instruction = (
+            "This is a personal EVENT — the attendees list must be empty ([])."
+        )
+
+    config = types.GenerateContentConfig(
+        system_instruction=f"""You are a calendar event manager.
+        Given the {date_context} create a new calendar entry based on the description.
+        {attendee_instruction}
+
+        IMPORTANT — dateTime format rules:
+        - Express dateTime as local time in the format "YYYY-MM-DDTHH:MM:SS" (no Z, no UTC offset).
+        - Always set the timeZone field to the correct IANA timezone name (e.g. "America/Los_Angeles").
+        - NEVER append "Z" or any UTC offset (e.g. "+00:00", "-07:00") to dateTime. The timeZone field
+          tells the Google Calendar API how to interpret the local time. Adding "Z" overrides timeZone
+          and will place the event at the wrong time.
+
         Return ONLY these exact fields in JSON format:
         - summary: string
-        - location: string  
+        - location: string
         - description: string
-        - start: object with dateTime and timeZone
-        - end: object with dateTime and timeZone
+        - start: object with dateTime (local, no Z) and timeZone (IANA name)
+        - end: object with dateTime (local, no Z) and timeZone (IANA name)
         - recurrence: array of strings
         - attendees: array of objects with email field
         - reminders: object with useDefault and overrides
         Do not include any other fields or properties.
         """,
-        response_mime_type = "application/json",
-        response_schema = NewEventDetails
+        response_mime_type="application/json",
+        response_schema=NewEventDetails
     )
 
-  contents = [
-    types.Content(
-      role="user", parts=[types.Part(text=description)]
-    )
-  ] 
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
 
-  response = run_model(model_name, contents, config)
-  response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
 
-  logger.info(f"New calendar event: {response_json}")
+    logger.info(f"New calendar {item_type}: {response_json}")
 
-  # Use the Google Calendar API to create the event
-  try: 
-    service = build("calendar", "v3", credentials=credentials)
-    event = service.events().insert(calendarId=calendar_id, body=response_json).execute()
-    logger.info(f"New calendar event created: {event.get('htmlLink')}")
-  except HttpError as error:
-    logger.error(f"An error occurred: {error}")
+    try:
+        service = build("calendar", "v3", credentials=credentials)
+        event = service.events().insert(calendarId=calendar_id, body=response_json).execute()
+        logger.info(f"New calendar {item_type} created: {event.get('htmlLink')}")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred: {error}",
+            calendar_link=None
+        )
+
+    attendees_info = response_json.get("attendees", [])
+    attendee_str = f" with {attendees_info}" if attendees_info else ""
     return CalendarResponse(
-      success=False,
-      message=f"An error occurred: {error}",
-      calendar_link=None
+        success=True,
+        message=f"New {item_type} '{response_json['summary']}' created for {response_json['start']['dateTime']}{attendee_str}",
+        calendar_link=event.get("htmlLink")
     )
 
-  # Generate response
-  return CalendarResponse(
-    success=True,
-    message=f"New calendar event '{response_json["summary"]}' created for {response_json["start"]["dateTime"]} with {response_json["attendees"]}",
-    calendar_link=event.get('htmlLink')
-  )
 
-# Delete an existing calendar event identified by its ID
+# Create a new Google Task
+def create_task(credentials, description: str) -> CalendarResponse:
+    """Create a new Google Task in the default task list."""
+    logger.info("Creating a new Google Task")
+    logger.debug(f"Input text: {description}")
+
+    today = datetime.now()
+    date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+
+    config = types.GenerateContentConfig(
+        system_instruction=f"""You are a task manager.
+        Given the {date_context} create a new task based on the description.
+        Return ONLY these fields in JSON format:
+        - title: string (required — the task name)
+        - notes: string (optional — additional details or context)
+        - due: string (optional — due date in RFC 3339 format, e.g. "2026-03-28T00:00:00.000Z")
+        - status: string ("needsAction" or "completed", default "needsAction")
+        Do not include any other fields.
+        """,
+        response_mime_type="application/json",
+        response_schema=TaskItem
+    )
+
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
+
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
+
+    logger.info(f"New task details: {response_json}")
+
+    try:
+        service = build("tasks", "v1", credentials=credentials)
+        task = service.tasks().insert(tasklist="@default", body=response_json).execute()
+        logger.info(f"Task created: {task.get('title')}")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred: {error}",
+            calendar_link=None
+        )
+
+    due_str = f" due {response_json['due']}" if response_json.get("due") else ""
+    return CalendarResponse(
+        success=True,
+        message=f"Task '{response_json['title']}' created successfully{due_str}",
+        calendar_link=None
+    )
+
+
+# Delete an existing calendar event by ID
 def delete_event_by_id(credentials, calendar_id, event_id: str) -> CalendarResponse:
-  """Delete an existing calendar event by ID"""
-  logger.info("Deleting an existing calendar event by ID")
-  logger.info(f"Input text: {event_id}")
-  
-  try:
-    service = build("calendar", "v3", credentials=credentials)
-    service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
-    logger.info(f"Event {event_id} deleted")
-  except HttpError as error:
-    logger.error(f"An error occurred: {error}")
+    """Delete an existing calendar event by ID."""
+    logger.info("Deleting an existing calendar event by ID")
+    logger.info(f"Event ID: {event_id}")
+
+    try:
+        service = build("calendar", "v3", credentials=credentials)
+        service.events().delete(calendarId=calendar_id, eventId=event_id).execute()
+        logger.info(f"Event {event_id} deleted")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred: {error}",
+            calendar_link=None
+        )
+
     return CalendarResponse(
-      success=False,
-      message=f"An error occurred: {error}",
-      calendar_link=None
+        success=True,
+        message=f"Event {event_id} deleted",
+        calendar_link=None
     )
-  
-  # Generate response
-  return CalendarResponse(
-    success=True,
-    message=f"Event {event_id} deleted",
-    calendar_link=None
-  )
-  
+
+
 # Delete one or more calendar events given the user's description
 def delete_event(credentials, calendar_id, description: str, all: bool = False) -> CalendarResponse:
-  """Delete an existing calendar event"""
-  logger.info("Deleting an existing calendar event")
-  logger.info(f"Input text: {description}")
+    """Delete one or more calendar meetings or events matching the description."""
+    logger.info("Deleting calendar event(s)")
+    logger.info(f"Input text: {description}")
 
-  events = get_calendar_events(credentials, calendar_id, description)
-  logger.info(f"Found {len(events)} event(s)")
-  logger.info(f"Events: {events}")
+    events = get_calendar_events(credentials, calendar_id, description)
+    logger.info(f"Found {len(events)} event(s)")
 
-  # Confirm that the user wants to delete the event(s)
-  if (len(events) > 0):
-    print(f"About to delete the following {len(events)} event(s):")
-    for event in events:
-      print(f"Event {event['id']}: {event['summary']} from {event['start']['dateTime']} to {event['end']['dateTime']}")
-    print("Are you sure you want to delete these events? (y/n)")
-    confirm = input()
-    if confirm.lower() != 'y':
-      return CalendarResponse(
-        success=False,
-        message="User did not confirm deletion of events",
-        calendar_link=None
-      ) 
-  
-  # Delete the events
-  calResponseMessage = ""
+    if not events:
+        return CalendarResponse(
+            success=False,
+            message=f"No events found matching '{description}'",
+            calendar_link=None
+        )
 
-  if all:
-    for event in events:
-      calResponse = delete_event_by_id(credentials, calendar_id, event['id'])
-      if calResponse.success:
-        calResponseMessage += f"Event {event['id']}: {event['summary']} from {event['start']['dateTime']} to {event['end']['dateTime']} deleted\n"
-      else:
-         calResponseMessage += f"Event {event['id']}: deletion error {calResponse.message}\n"
-  else:
-    calResponse = delete_event_by_id(credentials, calendar_id, events[0]['id'])
-    if calResponse.success:
-      calResponseMessage += f"Event {event['id']}: {event['summary']} from {event['start']['dateTime']} to {event['end']['dateTime']} deleted\n"
+    calResponseMessage = ""
+
+    if all:
+        for event in events:
+            calResponse = delete_event_by_id(credentials, calendar_id, event["id"])
+            if calResponse.success:
+                calResponseMessage += f"Deleted: {event['summary']} ({event['start'].get('dateTime', event['start'].get('date'))})\n"
+            else:
+                calResponseMessage += f"Error deleting {event['id']}: {calResponse.message}\n"
     else:
-      calResponseMessage += f"Event {event['id']}: deletion error {calResponse.message}\n"
+        event = events[0]
+        calResponse = delete_event_by_id(credentials, calendar_id, event["id"])
+        if calResponse.success:
+            calResponseMessage = f"Deleted: {event['summary']} ({event['start'].get('dateTime', event['start'].get('date'))})"
+        else:
+            calResponseMessage = f"Error deleting {event['id']}: {calResponse.message}"
 
-  return CalendarResponse(
-    success=True,
-    message=calResponseMessage,
-    calendar_link=None
-  )
+    return CalendarResponse(
+        success=True,
+        message=calResponseMessage,
+        calendar_link=None
+    )
 
-# Modify (update)an existing calendar event given the user's description
+
+# Delete one or more Google Tasks matching the description
+def delete_task(credentials, description: str, all: bool = False) -> CalendarResponse:
+    """Delete one or more Google Tasks matching the description."""
+    logger.info("Deleting Google Task(s)")
+    logger.info(f"Input text: {description}")
+
+    tasks = get_tasks(credentials, description)
+    if not tasks:
+        return CalendarResponse(
+            success=False,
+            message=f"No tasks found matching '{description}'",
+            calendar_link=None
+        )
+
+    try:
+        service = build("tasks", "v1", credentials=credentials)
+        tasks_to_delete = tasks if all else [tasks[0]]
+        deleted_titles = []
+        for task in tasks_to_delete:
+            service.tasks().delete(tasklist="@default", task=task["id"]).execute()
+            deleted_titles.append(task.get("title", task["id"]))
+            logger.info(f"Task {task['id']} deleted")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred: {error}",
+            calendar_link=None
+        )
+
+    return CalendarResponse(
+        success=True,
+        message=f"Deleted task(s): {', '.join(deleted_titles)}",
+        calendar_link=None
+    )
+
+
+# Modify an existing calendar event given the user's description
 def modify_event(credentials, calendar_id, description: str) -> CalendarResponse:
-  """Modify an existing calendar event"""
-  logger.info("Modifying an existing calendar event")
-  logger.debug(f"Input text: {description}")
+    """Modify an existing calendar meeting or event."""
+    logger.info("Modifying an existing calendar event")
+    logger.debug(f"Input text: {description}")
 
-  # Get the events 
-  events=  get_calendar_events(credentials, calendar_id, description)
-  logger.info(f"Found {len(events)} event(s)")
-  logger.info(f"Events: {events}")
+    events = get_calendar_events(credentials, calendar_id, description)
+    logger.info(f"Found {len(events)} event(s)")
 
-  # Check if the event was found
-  if len(events) == 0:
-    return CalendarResponse(
-      success=False,
-      message=f"ERROR: No events found for the description '{description}'",
-      calendar_link=None
-    )
-  elif len(events) > 1:
-    return CalendarResponse(
-      success=False,
-      message=f"ERROR: Multiple events found for the description '{description}'. Please make the description more specific.",
-      calendar_link=None
-    )
-  else:
+    if len(events) == 0:
+        return CalendarResponse(
+            success=False,
+            message=f"No events found for the description '{description}'",
+            calendar_link=None
+        )
+    elif len(events) > 1:
+        return CalendarResponse(
+            success=False,
+            message=f"Multiple events found for '{description}'. Please be more specific.",
+            calendar_link=None
+        )
+
     event = events[0]
-    logger.info(f"Event to modify: {event['id']}: {event['summary']} from {event['start']['dateTime']} to {event['end']['dateTime']}")
+    logger.info(f"Event to modify: {event['id']}: {event['summary']}")
 
-  # Determine the event update parameters given the user's description and the event object
-  today = datetime.now()
-  date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+    today = datetime.now()
+    date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
 
-  config = types.GenerateContentConfig(
-        system_instruction = f"""You are a Google Calendar manager well versed in the Google Calendar API. 
-        The user is requesting a modification to an existing calendar event '{event}' given that the date
-        context is '{date_context}'. Starting with the current calendar event, create a JSON object (whose fields
-        are below) to modify the calendar event based on the description provided by the user. Update ONLY the fields
-        that are to be modified. 
-        Return ONLY the fields that are to be modified in JSON format:
+    config = types.GenerateContentConfig(
+        system_instruction=f"""You are a Google Calendar manager well versed in the Google Calendar API.
+        The user is requesting a modification to an existing calendar event '{event}' given that {date_context}.
+        Starting with the current calendar event, create a JSON object to modify the event based on the user's description.
+        Update ONLY the fields that are to be modified.
+
+        IMPORTANT — dateTime format rules:
+        - Express dateTime as local time in the format "YYYY-MM-DDTHH:MM:SS" (no Z, no UTC offset).
+        - Always set the timeZone field to the correct IANA timezone name (e.g. "America/Los_Angeles").
+        - NEVER append "Z" or any UTC offset to dateTime. Adding "Z" overrides timeZone and will place
+          the event at the wrong local time.
+
+        Return ONLY the fields to be modified in JSON format:
         - summary: string
-        - location: string  
+        - location: string
         - description: string
-        - start: object with dateTime and timeZone
-        - end: object with dateTime and timeZone
+        - start: object with dateTime (local, no Z) and timeZone (IANA name)
+        - end: object with dateTime (local, no Z) and timeZone (IANA name)
         - recurrence: array of strings
         - attendees: array of objects with email field
         - reminders: object with useDefault and overrides
         Do not include any other fields or properties.
         """,
-        response_mime_type = "application/json",
-        response_schema = NewEventDetails
+        response_mime_type="application/json",
+        response_schema=NewEventDetails
     )
 
-  contents = [
-    types.Content(
-      role="user", parts=[types.Part(text=description)]
-    )
-  ] 
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
 
-  response = run_model(model_name, contents, config)
-  response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
 
-  logger.info(f"Update calendar event: {response_json}")
+    logger.info(f"Update calendar event: {response_json}")
 
-  # Modify the event
-  try:
-    service = build("calendar", "v3", credentials=credentials)
-    event = service.events().patch(calendarId=calendar_id, eventId=event['id'], body=response_json).execute()
-    logger.info(f"Event {event['id']} successfully modified")
-  except HttpError as error:
-    logger.error(f"An error occurred while modifying the event ({event['id']}): {error}")
+    try:
+        service = build("calendar", "v3", credentials=credentials)
+        updated_event = service.events().patch(
+            calendarId=calendar_id, eventId=event["id"], body=response_json
+        ).execute()
+        logger.info(f"Event {event['id']} successfully modified")
+    except HttpError as error:
+        logger.error(f"An error occurred while modifying the event ({event['id']}): {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred while modifying the event ({event['id']}): {error}",
+            calendar_link=None
+        )
+
     return CalendarResponse(
-      success=False,
-      message=f"An error occurred while modifying the event ({event['id']}): {error}",
-      calendar_link=None
+        success=True,
+        message=f"Modified: {events[0]['summary']} ({events[0]['start'].get('dateTime', events[0]['start'].get('date'))})",
+        calendar_link=None
     )
 
-  # Return the response
-  return CalendarResponse(
-    success=True,
-    message=f"Event {events[0]['id']}: {events[0]['summary']} from {events[0]['start']['dateTime']} to {events[0]['end']['dateTime']} modified",
-    calendar_link=None
-  )
+
+# Modify an existing Google Task given the user's description
+def modify_task(credentials, description: str) -> CalendarResponse:
+    """Modify an existing Google Task."""
+    logger.info("Modifying an existing Google Task")
+    logger.debug(f"Input text: {description}")
+
+    tasks = get_tasks(credentials, description)
+    if not tasks:
+        return CalendarResponse(
+            success=False,
+            message=f"No tasks found matching '{description}'",
+            calendar_link=None
+        )
+    if len(tasks) > 1:
+        return CalendarResponse(
+            success=False,
+            message=f"Multiple tasks found matching '{description}'. Please be more specific.",
+            calendar_link=None
+        )
+
+    task = tasks[0]
+    logger.info(f"Task to modify: {task['id']}: {task.get('title')}")
+
+    today = datetime.now()
+    date_context = f"Today is {today.strftime('%A, %B %d, %Y')}."
+
+    config = types.GenerateContentConfig(
+        system_instruction=f"""You are a task manager.
+        The user wants to modify the existing task '{task}' given that {date_context}.
+        Based on the description, create a JSON object with only the fields that need to change:
+        - title: string
+        - notes: string
+        - due: string (RFC 3339 format, e.g. "2026-03-28T00:00:00.000Z")
+        - status: string ("needsAction" or "completed")
+        Do not include fields that are not being changed.
+        """,
+        response_mime_type="application/json",
+        response_schema=TaskItem
+    )
+
+    contents = [
+        types.Content(role="user", parts=[types.Part(text=description)])
+    ]
+
+    response = run_model(model_name, contents, config)
+    response_json = json.loads(response.candidates[0].content.parts[0].text)
+
+    logger.info(f"Task update payload: {response_json}")
+
+    try:
+        service = build("tasks", "v1", credentials=credentials)
+        service.tasks().patch(
+            tasklist="@default", task=task["id"], body=response_json
+        ).execute()
+        logger.info(f"Task {task['id']} modified")
+    except HttpError as error:
+        logger.error(f"An error occurred: {error}")
+        return CalendarResponse(
+            success=False,
+            message=f"An error occurred: {error}",
+            calendar_link=None
+        )
+
+    return CalendarResponse(
+        success=True,
+        message=f"Task '{task.get('title')}' modified successfully",
+        calendar_link=None
+    )
+
 
 # ---------------------------------------------------------------------------------
-# Step 3: Define the function to process the calendar request provided by the user
+# Step 3: Route the calendar/task request to the appropriate handler
 # ---------------------------------------------------------------------------------
 
 def process_calendar_request(credentials, calendar_id, user_input: str) -> Optional[CalendarResponse]:
-  """Process an incoming calendar request"""
-  logger.info("Processing calendar request {user_input}")
+    """Process an incoming calendar or task request and route to the correct handler."""
+    logger.info(f"Processing request: {user_input}")
 
-  # Check if the request is a calendar event or not
-  is_calendar_event = check_if_calendar_event(user_input)
+    # Step 1: Check if this is a calendar/task request at all
+    is_calendar_event = check_if_calendar_event(user_input)
+    if not (is_calendar_event["is_calendar_event"] and is_calendar_event["confidence_score"] > 0.7):
+        logger.warning("Request is not a recognized calendar or task request")
+        return None
 
-  if is_calendar_event["is_calendar_event"] and is_calendar_event["confidence_score"] > 0.7:
-    calendar_request_type = determine_calendar_request_type(user_input)
-  else:
-    logger.warning("Calendar request type not supported")
-    return None
+    # Step 2: Classify action and item type
+    request_type = determine_calendar_request_type(user_input)
+    logger.info(f"Request type: {request_type}")
 
-  logger.info(f"Calendar request type: {calendar_request_type}")
+    action = request_type.get("action", "other")
+    item_type = request_type.get("item_type", "unknown")
+    description = request_type.get("description", user_input)
+    confidence = request_type.get("confidence_score", 0)
 
-  if (calendar_request_type["event_type"] == "new_event" and calendar_request_type["confidence_score"] > 0.7):
-    return create_new_event(credentials, calendar_id, calendar_request_type["description"])
-  elif (calendar_request_type["event_type"] == "modify_event" and calendar_request_type["confidence_score"] > 0.7):
-    return modify_event(credentials, calendar_id, calendar_request_type["description"])
-  elif (calendar_request_type["event_type"] == "delete_event" and calendar_request_type["confidence_score"] > 0.7):
-    return delete_event(credentials, calendar_id, calendar_request_type["description"])
-  else:
-    logger.warning("Calendar request type not supported")
-    return None
-  
+    if confidence <= 0.7:
+        logger.warning(f"Low confidence ({confidence:.2f}), skipping")
+        return None
+
+    # Step 3: Route to the appropriate handler
+    if action == "new":
+        if item_type == "task":
+            return create_task(credentials, description)
+        else:
+            # Both "meeting" and "event" use the calendar API; item_type controls attendee handling
+            return create_new_event(credentials, calendar_id, description, item_type=item_type)
+
+    elif action == "modify":
+        if item_type == "task":
+            return modify_task(credentials, description)
+        else:
+            return modify_event(credentials, calendar_id, description)
+
+    elif action == "delete":
+        if item_type == "task":
+            return delete_task(credentials, description)
+        else:
+            return delete_event(credentials, calendar_id, description)
+
+    else:
+        logger.warning(f"Unsupported action '{action}' for item type '{item_type}'")
+        return None
+
+
 # --------------------------------------------------------------
 # Step 4: Define the main function to run the calendar agent
 # --------------------------------------------------------------
 
 def main():
-  """Create a new calendar event"""
+    """Run the calendar agent interactively from the command line."""
 
-  creds = None
-  # The file token.json stores the user's access and refresh tokens, and is
-  # created automatically when the authorization flow completes for the first
-  # time.
-  if os.path.exists("token.json"):
-    creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-  # If there are no (valid) credentials available, let the user log in.
-  if not creds or not creds.valid:
-    if creds and creds.expired and creds.refresh_token:
-      creds.refresh(Request())
-    else:
-      flow = InstalledAppFlow.from_client_secrets_file(
-          "credentials.json", SCOPES
-      )
-      creds = flow.run_local_server(port=0)
-    # Save the credentials for the next run
-    with open("token.json", "w") as token:
-      token.write(creds.to_json())
+    creds = None
+    if os.path.exists("token.json"):
+        creds = Credentials.from_authorized_user_file("token.json", SCOPES)
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        else:
+            flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
+            creds = flow.run_local_server(port=0)
+        with open("token.json", "w") as token:
+            token.write(creds.to_json())
 
-    # Prompt user for event description
-    print("\n=== Google Calendar Agent===")
-    print("Please describe the Google calendar event you want to the agent to create, modify, or delete.")
-    print("Example: 'Schedule a meeting with John (john@email.com) tomorrow at 2 PM for 1 hour'")
+    print("\n=== Google Calendar Agent ===")
+    print("Describe a meeting, event, or task you want to create, modify, or delete.")
+    print("Examples:")
+    print("  'Schedule a team meeting with John (john@email.com) tomorrow at 2 PM for 1 hour'")
+    print("  'Add a dentist appointment on Friday at 10 AM'")
+    print("  'Add a task to review the Q1 report by end of week'")
     print("Type 'quit' to exit.\n")
-    
+
     while True:
-        event_description = input("Enter event description: ").strip()
-        
-        if event_description.lower() in ['quit', 'exit', 'q']:
+        user_input = input("Enter request: ").strip()
+
+        if user_input.lower() in ["quit", "exit", "q"]:
             print("Goodbye!")
             break
-            
-        if not event_description:
-            print("Please enter a valid event description.")
+
+        if not user_input:
+            print("Please enter a valid request.")
             continue
-            
-        print(f"\nProcessing: {event_description}")
-        result = process_calendar_request(creds, 'primary', event_description)
-        
+
+        print(f"\nProcessing: {user_input}")
+        result = process_calendar_request(creds, "primary", user_input)
+
         if result and result.success:
-            print(f"✅ Successfully executed event: {result.message}")
+            print(f"✅ {result.message}")
         else:
-            print("❌ Failed to execute event: {result.message} Please try again with a clearer description.")
-        
-        print("\n" + "="*50 + "\n")
+            msg = result.message if result else "Could not process request."
+            print(f"❌ {msg} Please try again with a clearer description.")
+
+        print("\n" + "=" * 50 + "\n")
+
 
 if __name__ == "__main__":
-  main()
+    main()

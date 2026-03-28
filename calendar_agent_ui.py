@@ -6,18 +6,22 @@ import json
 import logging
 from datetime import datetime, timezone, timedelta
 
-# Import your calendar agent functions
+# Import calendar agent functions
 from google_calendar_agent import (
     process_calendar_request,
     check_if_calendar_event,
     determine_calendar_request_type,
     get_calendar_events,
+    get_tasks,
     create_new_event,
+    create_task,
     modify_event,
-    delete_event
+    modify_task,
+    delete_event,
+    delete_task,
 )
 
-# Google Calendar authentication imports
+# Google Calendar / Tasks authentication imports
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -29,11 +33,14 @@ from googleapiclient.errors import HttpError
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Google Calendar scopes
-SCOPES = ["https://www.googleapis.com/auth/calendar"]
+# OAuth scopes — must match google_calendar_agent.py
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar",
+    "https://www.googleapis.com/auth/tasks",
+]
 
 def get_google_credentials():
-    """Get or create Google Calendar credentials.
+    """Get or create Google Calendar/Tasks credentials.
 
     If the saved refresh token is revoked or invalid (invalid_grant), we remove
     token.json and run the browser flow again instead of failing permanently.
@@ -81,7 +88,7 @@ def main():
         layout="wide",
         initial_sidebar_state="expanded"
     )
-    
+
     # Custom CSS for better styling
     st.markdown("""
     <style>
@@ -108,25 +115,27 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
-    
+
     # Sidebar for navigation
     st.sidebar.title("Navigation")
-    
+
     # Initialize page in session state
-    if 'page' not in st.session_state:
+    if "page" not in st.session_state:
         st.session_state.page = "🏠 Home"
-    
+
+    pages = ["🏠 Home", "➕ Create", "🔍 Search", "✏️ Modify", "🗑️ Delete", "⚙️ Settings"]
+
     page = st.sidebar.selectbox(
         "Choose an action:",
-        ["🏠 Home", "➕ Create Event", "🔍 Search Events", "✏️ Modify Event", "🗑️ Delete Event", "⚙️ Settings"],
-        index=["🏠 Home", "➕ Create Event", "🔍 Search Events", "✏️ Modify Event", "🗑️ Delete Event", "⚙️ Settings"].index(st.session_state.page)
+        pages,
+        index=pages.index(st.session_state.page)
     )
-    
+
     # Update session state when sidebar changes
     if page != st.session_state.page:
         st.session_state.page = page
         st.rerun()
-    
+
     # Check API key
     if not os.environ.get("GOOGLE_API_KEY"):
         st.error("❌ GOOGLE_API_KEY environment variable not set!")
@@ -137,7 +146,7 @@ def main():
             st.success("✅ API key set successfully!")
             st.rerun()
         st.stop()
-    
+
     # Get credentials
     try:
         creds = get_google_credentials()
@@ -158,19 +167,19 @@ def main():
     # Main content based on selected page
     if page == "🏠 Home":
         show_home_page(creds, st.session_state.calendar_owner_name)
-    
-    elif page == "➕ Create Event":
-        show_create_event_page(creds)
-    
-    elif page == "🔍 Search Events":
-        show_search_events_page(creds)
-    
-    elif page == "✏️ Modify Event":
-        show_modify_event_page(creds)
-    
-    elif page == "🗑️ Delete Event":
-        show_delete_event_page(creds)
-    
+
+    elif page == "➕ Create":
+        show_create_page(creds)
+
+    elif page == "🔍 Search":
+        show_search_page(creds)
+
+    elif page == "✏️ Modify":
+        show_modify_page(creds)
+
+    elif page == "🗑️ Delete":
+        show_delete_page(creds)
+
     elif page == "⚙️ Settings":
         show_settings_page()
 
@@ -192,7 +201,7 @@ def get_upcoming_events(creds, max_results=5):
 
 
 def show_home_page(creds, owner_name=""):
-    """Display the home page with overview and quick actions"""
+    """Display the home page with overview and quick actions."""
     greeting = f"Welcome to Your Calendar Agent, {owner_name}" if owner_name else "Welcome to Your Calendar Agent"
     st.markdown(f"## 🏠 {greeting}")
 
@@ -200,12 +209,12 @@ def show_home_page(creds, owner_name=""):
 
     with col1:
         st.markdown("### 🚀 Quick Actions")
-        if st.button("➕ Create New Event", use_container_width=True):
-            st.session_state.page = "➕ Create Event"
+        if st.button("➕ Create Meeting, Event, or Task", use_container_width=True):
+            st.session_state.page = "➕ Create"
             st.rerun()
 
-        if st.button("🔍 Search Events", use_container_width=True):
-            st.session_state.page = "🔍 Search Events"
+        if st.button("🔍 Search", use_container_width=True):
+            st.session_state.page = "🔍 Search"
             st.rerun()
 
     with col2:
@@ -244,94 +253,110 @@ def show_home_page(creds, owner_name=""):
             title = event.get("summary", "Untitled Event")
             location = event.get("location", "")
             link = event.get("htmlLink", "")
+            has_attendees = len(event.get("attendees", [])) > 0
+            label = "meeting" if has_attendees else "event"
 
             with st.container(border=True):
                 title_md = f"**{title}**"
                 if link:
                     title_md = f"**[{title}]({link})**"
                 st.markdown(title_md)
-                st.caption(f"🕐 {time_str}" + (f"  ·  📍 {location}" if location else ""))
+                st.caption(
+                    f"{'👥' if has_attendees else '📅'} {label.capitalize()}  ·  🕐 {time_str}"
+                    + (f"  ·  📍 {location}" if location else "")
+                )
 
     st.markdown("---")
     st.markdown("### 💡 How to Use")
     st.markdown("""
-    1. **Create Events**: Describe your event in natural language
-    2. **Search Events**: Find existing events by description or date
-    3. **Modify Events**: Update event details easily
-    4. **Delete Events**: Remove unwanted events with confirmation
+    1. **Create**: Describe a meeting (with attendees), personal event, or task in natural language
+    2. **Search**: Find existing meetings, events, or tasks by description or date
+    3. **Modify**: Update any meeting, event, or task by describing the change
+    4. **Delete**: Remove meetings, events, or tasks with confirmation
     """)
 
-def show_create_event_page(creds):
-    """Page for creating new calendar events"""
-    st.markdown("## ➕ Create New Calendar Event")
-    
-    # Event description input
-    event_description = st.text_area(
-        "Describe the event you want to create:",
-        placeholder="Example: Schedule a team meeting with John (john@email.com) tomorrow at 2 PM for 1 hour at Conference Room A",
-        height=120
+
+def show_create_page(creds):
+    """Page for creating new meetings, events, or tasks."""
+    st.markdown("## ➕ Create Meeting, Event, or Task")
+    st.markdown(
+        "Describe what you want to create. The agent will automatically determine "
+        "whether it's a **meeting** (with attendees), a personal **event**, or a **task**."
     )
-    
+
+    description = st.text_area(
+        "Describe the meeting, event, or task:",
+        placeholder=(
+            "Examples:\n"
+            "• Meeting: 'Schedule a sync with Alice (alice@co.com) and Bob (bob@co.com) on Friday at 2 PM for 1 hour'\n"
+            "• Event: 'Block my calendar for deep work on Monday from 9 AM to 12 PM'\n"
+            "• Task: 'Add a task to submit the Q1 report by end of this week'"
+        ),
+        height=140
+    )
+
     # Quick templates
     st.markdown("### 📝 Quick Templates")
     col1, col2, col3 = st.columns(3)
-    
+
     with col1:
-        if st.button("Team Meeting", use_container_width=True):
-            st.session_state.event_description = "Schedule a team meeting tomorrow at 10 AM for 1 hour"
-    
+        if st.button("👥 Team Meeting", use_container_width=True):
+            st.session_state.create_description = (
+                "Schedule a team meeting with the team (team@company.com) tomorrow at 10 AM for 1 hour"
+            )
     with col2:
-        if st.button("Client Call", use_container_width=True):
-            st.session_state.event_description = "Schedule a client call with Sarah (sarah@company.com) on Friday at 3 PM for 45 minutes"
-    
+        if st.button("📅 Focus Block", use_container_width=True):
+            st.session_state.create_description = (
+                "Block my calendar for deep work on Monday from 9 AM to 12 PM"
+            )
     with col3:
-        if st.button("Daily Standup", use_container_width=True):
-            st.session_state.event_description = "Set up daily standup meeting every weekday at 9 AM for 15 minutes"
-    
-    # Set description from session state if available
-    if hasattr(st.session_state, 'event_description'):
-        event_description = st.session_state.event_description
-        del st.session_state.event_description
-    
-    # Create event button
-    if st.button("🚀 Create Event", type="primary", use_container_width=True):
-        if not event_description.strip():
-            st.error("❌ Please enter an event description.")
+        if st.button("✅ Task", use_container_width=True):
+            st.session_state.create_description = (
+                "Add a task to review the project proposal by Friday"
+            )
+
+    # Apply template if selected
+    if "create_description" in st.session_state:
+        description = st.session_state.create_description
+        del st.session_state.create_description
+
+    if st.button("🚀 Create", type="primary", use_container_width=True):
+        if not description.strip():
+            st.error("❌ Please enter a description.")
         else:
-            with st.spinner("Creating your event..."):
+            with st.spinner("Processing your request..."):
                 try:
-                    result = create_new_event(creds, 'primary', event_description)
+                    result = process_calendar_request(creds, "primary", description)
                     if result and result.success:
-                        st.success("✅ Event created successfully!")
+                        st.success("✅ Created successfully!")
                         st.markdown(f"**Message:** {result.message}")
                         if result.calendar_link:
                             st.markdown(f"**Calendar Link:** [View Event]({result.calendar_link})")
                     else:
-                        st.error(f"❌ Failed to create event: {result.message if result else 'Unknown error'}")
+                        msg = result.message if result else "Could not process request. Please try a clearer description."
+                        st.error(f"❌ {msg}")
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
 
-def show_search_events_page(creds):
-    """Page for searching calendar events"""
-    st.markdown("## 🔍 Search Calendar Events")
-    
+
+def show_search_page(creds):
+    """Page for searching calendar events and tasks."""
+    st.markdown("## 🔍 Search Meetings, Events, and Tasks")
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
-        # Search by description
         search_query = st.text_input(
             "Search by description:",
-            placeholder="e.g., team meeting, client call"
+            placeholder="e.g., team meeting, dentist, report"
         )
-    
+
     with col2:
-        # Date range
         date_option = st.selectbox(
-            "Date range:",
+            "Date range (for calendar items):",
             ["Today", "This Week", "This Month", "Custom Range"]
         )
-    
-    # Custom date range
+
     if date_option == "Custom Range":
         col1, col2 = st.columns(2)
         with col1:
@@ -341,136 +366,175 @@ def show_search_events_page(creds):
     else:
         start_date = None
         end_date = None
-    
-    # Search button
-    if st.button("🔍 Search Events", type="primary", use_container_width=True):
+
+    include_tasks = st.checkbox("Also search tasks", value=True)
+
+    if st.button("🔍 Search", type="primary", use_container_width=True):
         if not search_query and date_option == "Custom Range" and not start_date and not end_date:
             st.warning("⚠️ Please provide a search query or select a date range.")
         else:
-            with st.spinner("Searching for events..."):
+            with st.spinner("Searching..."):
+                # --- Calendar events (meetings + personal events) ---
                 try:
-                    # Convert dates to ISO format if provided
-                    start_iso = None
-                    end_iso = None
-                    
-                    if start_date:
-                        start_iso = datetime.combine(start_date, datetime.min.time()).isoformat() + 'Z'
-                    if end_date:
-                        end_iso = datetime.combine(end_date, datetime.max.time()).isoformat() + 'Z'
-                    
-                    # Get events list from the user's description
-                    events = get_calendar_events(creds, 'primary', search_query or "all events")
-                    
-                    # events = events_result.get('items', [])
-                    
-                    if not events:
-                        st.info("📭 No events found matching your criteria.")
-                    else:
-                        st.success(f"✅ Found {len(events)} event(s)")
-                        
-                        for i, event in enumerate(events, 1):
-                            with st.expander(f"{i}. {event.get('summary', 'No title')}"):
-                                start = event['start'].get('dateTime', event['start'].get('date'))
-                                end = event['end'].get('dateTime', event['end'].get('date'))
-                                location = event.get('location', 'No location')
-                                description = event.get('description', 'No description')
-                                
-                                st.markdown(f"**📅 Time:** {start} to {end}")
-                                st.markdown(f"**📍 Location:** {location}")
-                                st.markdown(f"**📝 Description:** {description}")
-                                
-                                if event.get('htmlLink'):
-                                    st.markdown(f"**🔗 [View in Calendar]({event['htmlLink']})**")
-                
+                    events = get_calendar_events(creds, "primary", search_query or "all events")
                 except Exception as e:
-                    st.error(f"❌ Error searching events: {e}")
+                    events = []
+                    st.error(f"❌ Error searching calendar: {e}")
 
-def show_modify_event_page(creds):
-    """Page for modifying existing calendar events"""
-    st.markdown("## ✏️ Modify Calendar Event")
-    
-    # Search for event to modify
-    event_description = st.text_area(
-        "Describe the event you want to modify:",
-        placeholder="Example: Change the team meeting time to 3 PM and add John as attendee",
-        height=100
+                if events:
+                    st.markdown(f"### 📅 Calendar Items ({len(events)} found)")
+                    for i, event in enumerate(events, 1):
+                        start = event["start"].get("dateTime", event["start"].get("date"))
+                        end = event["end"].get("dateTime", event["end"].get("date"))
+                        location = event.get("location", "No location")
+                        description = event.get("description", "No description")
+                        has_attendees = len(event.get("attendees", [])) > 0
+                        label = "Meeting" if has_attendees else "Event"
+
+                        with st.expander(f"{i}. {'👥' if has_attendees else '📅'} [{label}] {event.get('summary', 'No title')}"):
+                            st.markdown(f"**📅 Time:** {start} to {end}")
+                            st.markdown(f"**📍 Location:** {location}")
+                            st.markdown(f"**📝 Description:** {description}")
+                            if has_attendees:
+                                attendees = [a.get("email", "") for a in event.get("attendees", [])]
+                                st.markdown(f"**👥 Attendees:** {', '.join(attendees)}")
+                            if event.get("htmlLink"):
+                                st.markdown(f"**🔗 [View in Calendar]({event['htmlLink']})**")
+                elif not include_tasks:
+                    st.info("📭 No calendar items found matching your criteria.")
+
+                # --- Tasks ---
+                if include_tasks:
+                    try:
+                        tasks = get_tasks(creds, search_query or "all tasks")
+                    except Exception as e:
+                        tasks = []
+                        st.error(f"❌ Error searching tasks: {e}")
+
+                    if tasks:
+                        st.markdown(f"### ✅ Tasks ({len(tasks)} found)")
+                        for i, task in enumerate(tasks, 1):
+                            due = task.get("due", "No due date")
+                            notes = task.get("notes", "No notes")
+                            status = task.get("status", "needsAction")
+                            status_icon = "✅" if status == "completed" else "⬜"
+                            with st.expander(f"{i}. {status_icon} {task.get('title', 'Untitled Task')}"):
+                                st.markdown(f"**📅 Due:** {due}")
+                                st.markdown(f"**📝 Notes:** {notes}")
+                                st.markdown(f"**Status:** {status}")
+                    elif not events:
+                        st.info("📭 No items found matching your criteria.")
+
+
+def show_modify_page(creds):
+    """Page for modifying existing meetings, events, or tasks."""
+    st.markdown("## ✏️ Modify Meeting, Event, or Task")
+    st.markdown(
+        "Describe the change you want to make. The agent will determine whether the item "
+        "is a **meeting**, **event**, or **task** and apply the update."
     )
-    
-    if st.button("🔍 Find Event to Modify", type="primary", use_container_width=True):
-        if not event_description.strip():
-            st.error("❌ Please enter an event description.")
+
+    description = st.text_area(
+        "Describe what to modify:",
+        placeholder=(
+            "Examples:\n"
+            "• 'Move the Friday team meeting to 3 PM'\n"
+            "• 'Change my dentist appointment location to 123 Main St'\n"
+            "• 'Mark the report review task as completed'"
+        ),
+        height=120
+    )
+
+    if st.button("✏️ Apply Modification", type="primary", use_container_width=True):
+        if not description.strip():
+            st.error("❌ Please enter a description.")
         else:
-            with st.spinner("Finding event to modify..."):
+            with st.spinner("Applying modification..."):
                 try:
-                    result = modify_event(creds, 'primary', event_description)
+                    result = process_calendar_request(creds, "primary", description)
                     if result and result.success:
-                        st.success("✅ Event modified successfully!")
+                        st.success("✅ Modified successfully!")
                         st.markdown(f"**Message:** {result.message}")
                     else:
-                        st.error(f"❌ Failed to modify event: {result.message if result else 'Unknown error'}")
+                        msg = result.message if result else "Could not process request."
+                        st.error(f"❌ {msg}")
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
 
-def show_delete_event_page(creds):
-    """Page for deleting calendar events"""
-    st.markdown("## 🗑️ Delete Calendar Event")
-    
+
+def show_delete_page(creds):
+    """Page for deleting meetings, events, or tasks."""
+    st.markdown("## 🗑️ Delete Meeting, Event, or Task")
+
     st.warning("⚠️ **Warning:** This action cannot be undone!")
-    
-    # Search for event to delete
-    event_description = st.text_area(
-        "Describe the event you want to delete:",
-        placeholder="Example: Delete the team meeting scheduled for tomorrow",
-        height=100
+
+    description = st.text_area(
+        "Describe what to delete:",
+        placeholder=(
+            "Examples:\n"
+            "• 'Delete the team meeting scheduled for tomorrow'\n"
+            "• 'Remove my dentist appointment on Friday'\n"
+            "• 'Delete the task to review the Q1 report'"
+        ),
+        height=120
     )
-    
-    # Delete options
-    delete_all = st.checkbox("Delete all matching events (if multiple found)")
-    
-    if st.button("🗑️ Delete Event", type="primary", use_container_width=True):
-        if not event_description.strip():
-            st.error("❌ Please enter an event description.")
+
+    delete_all = st.checkbox("Delete all matching items (if multiple found)")
+
+    if st.button("🗑️ Delete", type="primary", use_container_width=True):
+        if not description.strip():
+            st.error("❌ Please enter a description.")
         else:
-            with st.spinner("Finding event to delete..."):
+            with st.spinner("Finding and deleting..."):
                 try:
-                    result = delete_event(creds, 'primary', event_description, all=delete_all)
+                    # Classify item type to route to the right delete function
+                    request_type = determine_calendar_request_type(description)
+                    item_type = request_type.get("item_type", "unknown")
+
+                    if item_type == "task":
+                        result = delete_task(creds, description, all=delete_all)
+                    else:
+                        result = delete_event(creds, "primary", description, all=delete_all)
+
                     if result and result.success:
-                        st.success("✅ Event(s) deleted successfully!")
+                        st.success("✅ Deleted successfully!")
                         st.markdown(f"**Message:** {result.message}")
                     else:
-                        st.error(f"❌ Failed to delete event: {result.message if result else 'Unknown error'}")
+                        msg = result.message if result else "Could not process request."
+                        st.error(f"❌ {msg}")
                 except Exception as e:
                     st.error(f"❌ Error: {e}")
+
 
 def show_settings_page():
-    """Page for application settings"""
+    """Page for application settings."""
     st.markdown("## ⚙️ Settings")
-    
+
     st.markdown("### 🔑 API Configuration")
     st.info("Your Google API key is configured.")
-    
+
     st.markdown("### 📁 File Locations")
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.markdown("**Required files:**")
         if os.path.exists("credentials.json"):
             st.success("✅ credentials.json")
         else:
             st.error("❌ credentials.json (missing)")
-        
+
         if os.path.exists("token.json"):
             st.success("✅ token.json")
         else:
             st.info("ℹ️ token.json (will be created on first use)")
-    
+
     with col2:
         st.markdown("**Environment variables:**")
         if os.environ.get("GOOGLE_API_KEY"):
             st.success("✅ GOOGLE_API_KEY")
         else:
             st.error("❌ GOOGLE_API_KEY")
-    
+
     st.markdown("### 🧹 Clear Data")
     if st.button("🗑️ Clear Authentication Token"):
         if os.path.exists("token.json"):
@@ -478,6 +542,7 @@ def show_settings_page():
             st.success("✅ Authentication token cleared. You'll need to re-authenticate.")
         else:
             st.info("ℹ️ No authentication token to clear.")
+
 
 if __name__ == "__main__":
     main()
