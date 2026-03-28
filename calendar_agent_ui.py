@@ -85,13 +85,6 @@ def main():
     # Custom CSS for better styling
     st.markdown("""
     <style>
-    .main-header {
-        font-size: 2.5rem;
-        font-weight: bold;
-        color: #1f77b4;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
     .success-box {
         background-color: #d4edda;
         border: 1px solid #c3e6cb;
@@ -115,9 +108,6 @@ def main():
     }
     </style>
     """, unsafe_allow_html=True)
-    
-    # Header
-    st.markdown('<h1 class="main-header">📅 Google Calendar Agent</h1>', unsafe_allow_html=True)
     
     # Sidebar for navigation
     st.sidebar.title("Navigation")
@@ -155,10 +145,19 @@ def main():
     except Exception as e:
         st.error(f"❌ Authentication failed: {e}")
         st.stop()
-    
+
+    # Fetch calendar owner name once and cache in session state
+    if "calendar_owner_name" not in st.session_state:
+        try:
+            service = build("calendar", "v3", credentials=creds)
+            calendar_info = service.calendars().get(calendarId="primary").execute()
+            st.session_state.calendar_owner_name = calendar_info.get("summary", "")
+        except Exception:
+            st.session_state.calendar_owner_name = ""
+
     # Main content based on selected page
     if page == "🏠 Home":
-        show_home_page()
+        show_home_page(creds, st.session_state.calendar_owner_name)
     
     elif page == "➕ Create Event":
         show_create_event_page(creds)
@@ -175,34 +174,84 @@ def main():
     elif page == "⚙️ Settings":
         show_settings_page()
 
-def show_home_page():
+def get_upcoming_events(creds, max_results=5):
+    """Fetch the next upcoming events from Google Calendar."""
+    try:
+        service = build("calendar", "v3", credentials=creds)
+        now = datetime.now(timezone.utc).isoformat()
+        events_result = service.events().list(
+            calendarId="primary",
+            timeMin=now,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy="startTime"
+        ).execute()
+        return events_result.get("items", []), None
+    except HttpError as error:
+        return [], str(error)
+
+
+def show_home_page(creds, owner_name=""):
     """Display the home page with overview and quick actions"""
-    st.markdown("## 🏠 Welcome to Your Calendar Agent!")
-    
+    greeting = f"Welcome to Your Calendar Agent, {owner_name}" if owner_name else "Welcome to Your Calendar Agent"
+    st.markdown(f"## 🏠 {greeting}")
+
     col1, col2 = st.columns(2)
-    
+
     with col1:
         st.markdown("### 🚀 Quick Actions")
         if st.button("➕ Create New Event", use_container_width=True):
             st.session_state.page = "➕ Create Event"
             st.rerun()
-        
+
         if st.button("🔍 Search Events", use_container_width=True):
             st.session_state.page = "🔍 Search Events"
             st.rerun()
-    
+
     with col2:
         st.markdown("### 📊 Today's Overview")
         today = datetime.now().strftime("%A, %B %d, %Y")
         st.info(f"Today is {today}")
-        
-        # You can add more dynamic content here
-        st.markdown("""
-        - **3 upcoming events** this week
-        - **2 pending invitations**
-        - **1 recurring meeting** scheduled
-        """)
-    
+
+    st.markdown("---")
+    st.markdown("### 🗓️ Upcoming Events")
+
+    events, error = get_upcoming_events(creds, max_results=5)
+
+    if error:
+        st.error(f"❌ Could not load upcoming events: {error}")
+    elif not events:
+        st.info("📭 No upcoming events found.")
+    else:
+        for event in events:
+            start_raw = event["start"].get("dateTime", event["start"].get("date", ""))
+            end_raw = event["end"].get("dateTime", event["end"].get("date", ""))
+
+            # Format datetime strings for display
+            try:
+                if "T" in start_raw:
+                    start_dt = datetime.fromisoformat(start_raw)
+                    start_str = start_dt.strftime("%a, %b %d · %I:%M %p")
+                    end_dt = datetime.fromisoformat(end_raw)
+                    end_str = end_dt.strftime("%I:%M %p")
+                    time_str = f"{start_str} – {end_str}"
+                else:
+                    start_dt = datetime.fromisoformat(start_raw)
+                    time_str = start_dt.strftime("%a, %b %d") + " (All day)"
+            except ValueError:
+                time_str = start_raw
+
+            title = event.get("summary", "Untitled Event")
+            location = event.get("location", "")
+            link = event.get("htmlLink", "")
+
+            with st.container(border=True):
+                title_md = f"**{title}**"
+                if link:
+                    title_md = f"**[{title}]({link})**"
+                st.markdown(title_md)
+                st.caption(f"🕐 {time_str}" + (f"  ·  📍 {location}" if location else ""))
+
     st.markdown("---")
     st.markdown("### 💡 How to Use")
     st.markdown("""
