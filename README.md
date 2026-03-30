@@ -9,7 +9,7 @@ Google Calendar agent that **creates, searches, modifies, and deletes meetings, 
 - **Meetings** — calendar entries with one or more invited attendees (invites are sent via Google Calendar)
 - **Events** — personal calendar entries owned only by you, with no external attendees (e.g. focus blocks, appointments, reminders)
 - **Tasks** — to-do items managed via Google Tasks; no calendar time slot required
-- **Birthdays & Anniversaries** — yearly recurring all-day events with automatic email (1 day before) and pop-up (15 minutes before) reminders
+- **Birthdays & Anniversaries** — yearly recurring all-day events with automatic email (15 minutes before) and pop-up (15 minutes before) reminders
 - **Notifications** — email and/or pop-up reminders for meetings and events, configurable to any number of minutes, hours, or days before the item
 - **Streamlit app** (`calendar_agent_ui.py`): home screen with upcoming events, create, search, modify, delete, and settings pages
 - **Agent logic** (`google_calendar_agent.py`): classifies each request by action (create / modify / delete) and item type (meeting / event / task / birthday / anniversary), then drives the appropriate Google API call via structured LLM output
@@ -58,7 +58,7 @@ Birthday and anniversary events are created as **all-day events that repeat ever
 
 | Reminder | When |
 |----------|------|
-| Email | 1 day before |
+| Email | 15 minutes before |
 | Pop-up | 15 minutes before |
 
 These reminders are always applied — no extra instructions needed in your prompt.

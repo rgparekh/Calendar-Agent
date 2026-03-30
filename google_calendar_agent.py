@@ -544,8 +544,8 @@ def create_annual_event(credentials, calendar_id, description: str) -> CalendarR
         "reminders": {
             "useDefault": False,
             "overrides": [
-                {"method": "email", "minutes": 1440},  # 1 day before
-                {"method": "popup", "minutes": 15},     # 15 minutes before
+                {"method": "email", "minutes": 15},  # 15 minutes before
+                {"method": "popup", "minutes": 15},    # 15 minutes before
             ]
         }
     }
@@ -553,6 +553,7 @@ def create_annual_event(credentials, calendar_id, description: str) -> CalendarR
     # "birthday" is a recognized eventType in the Google Calendar API; anniversaries use the default.
     if event_type == "birthday":
         event_body["eventType"] = "birthday"
+        event_body["visibility"] = "private"  # required by the API for birthday event type
 
     logger.info(f"Annual event body: {event_body}")
 
