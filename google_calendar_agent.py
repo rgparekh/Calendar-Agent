@@ -4,6 +4,9 @@ import os
 import json
 import logging
 
+from dotenv import load_dotenv
+load_dotenv()
+
 from google import genai
 from google.genai import types
 from google.genai.types import Tool
