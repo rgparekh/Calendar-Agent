@@ -199,6 +199,16 @@ def run_model(model_name, contents, config):
     )
     return response
 
+def parse_json_response(response) -> dict:
+    """Parse JSON from a model response, handling markdown code fences and trailing text."""
+    text = response.candidates[0].content.parts[0].text.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1]  # drop the opening ```json line
+        text = text.rsplit("```", 1)[0]  # drop the closing ```
+    text = text.strip()
+    obj, _ = json.JSONDecoder().raw_decode(text)
+    return obj
+
 # --------------------------------------------------------------
 # Step 2: Define the functions to process calendar/task requests
 # --------------------------------------------------------------
@@ -227,7 +237,7 @@ def check_if_calendar_event(description: str) -> CalendarEvent:
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
 
     logger.info(
         f"Extraction complete - Is calendar/task request: {response_json['is_calendar_event']}, "
@@ -270,7 +280,7 @@ def determine_calendar_request_type(description: str) -> CalendarRequestType:
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
 
     logger.info(
         f"Extraction complete - Action: {response_json['action']}, "
@@ -314,7 +324,7 @@ def get_calendar_events(credentials, calendar_id, description: str) -> list:
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
     logger.info(f"Events List Parameters: {response_json}")
 
     try:
@@ -421,7 +431,7 @@ def create_new_event(credentials, calendar_id, description: str, item_type: str 
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
 
     # UI-supplied reminders take precedence over LLM-extracted reminders
     if reminders_override is not None:
@@ -479,7 +489,7 @@ def create_task(credentials, description: str) -> CalendarResponse:
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
 
     logger.info(f"New task details: {response_json}")
 
@@ -527,7 +537,7 @@ def create_annual_event(credentials, calendar_id, description: str) -> CalendarR
     contents = [types.Content(role="user", parts=[types.Part(text=description)])]
 
     response = run_model(model_name, contents, config)
-    details = json.loads(response.candidates[0].content.parts[0].text)
+    details = parse_json_response(response)
 
     summary = details["summary"]
     date_str = details["date"]  # YYYY-MM-DD
@@ -743,7 +753,16 @@ def modify_event(credentials, calendar_id, description: str, reminders_override:
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
+
+    # If the original event is an all-day event, ensure start/end use "date" not "dateTime"
+    is_all_day = "date" in event.get("start", {}) and "dateTime" not in event.get("start", {})
+    if is_all_day:
+        for field in ("start", "end"):
+            if field in response_json and "dateTime" in response_json[field]:
+                dt_str = response_json[field]["dateTime"]
+                date_only = dt_str[:10]  # extract YYYY-MM-DD
+                response_json[field] = {"date": date_only}
 
     # UI-supplied reminders take precedence over LLM-extracted reminders
     if reminders_override is not None:
@@ -818,7 +837,7 @@ def modify_task(credentials, description: str) -> CalendarResponse:
     ]
 
     response = run_model(model_name, contents, config)
-    response_json = json.loads(response.candidates[0].content.parts[0].text)
+    response_json = parse_json_response(response)
 
     logger.info(f"Task update payload: {response_json}")
 
