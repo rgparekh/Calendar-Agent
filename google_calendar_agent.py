@@ -32,7 +32,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 client = genai.Client(api_key=os.environ["GOOGLE_API_KEY"])
-model_name = "gemini-2.5-flash"
+model_name = os.environ.get("LLM_MODEL_NAME", "gemini-2.5-flash")
 
 # --------------------------------------------------------------
 # Step 1: Define the data models for each stage
