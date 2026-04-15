@@ -12,7 +12,7 @@ from google.genai import types
 from google.genai.types import Tool
 from pydantic import BaseModel, Field, ConfigDict
 from typing import Optional, Literal
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date as date_type
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -189,6 +189,28 @@ class CalendarResponse(BaseModel):
     success: bool = Field(description="Whether the operation was successful")
     message: str = Field(description="User-friendly response message")
     calendar_link: Optional[str] = Field(description="Calendar link if applicable")
+
+def _is_in_past(dt_str: str) -> bool:
+    """Return True if the given date/datetime string represents a time that has already passed.
+
+    Accepts:
+      - "YYYY-MM-DDTHH:MM:SS" (local datetime, no offset — compared against local now)
+      - "YYYY-MM-DD"           (all-day date — considered past if strictly before today)
+    """
+    dt_str = dt_str.strip()
+    now = datetime.now()
+    try:
+        if "T" in dt_str:
+            # Strip any accidental trailing Z or offset before comparing
+            clean = dt_str[:19]
+            event_dt = datetime.strptime(clean, "%Y-%m-%dT%H:%M:%S")
+            return event_dt < now
+        else:
+            event_date = datetime.strptime(dt_str[:10], "%Y-%m-%d").date()
+            return event_date < now.date()
+    except ValueError:
+        return False
+
 
 # Invoke the GenAI (Gemini) model and return its response
 def run_model(model_name, contents, config):
@@ -433,6 +455,16 @@ def create_new_event(credentials, calendar_id, description: str, item_type: str 
     response = run_model(model_name, contents, config)
     response_json = parse_json_response(response)
 
+    # Reject events scheduled in the past
+    start_dt = response_json.get("start", {}).get("dateTime") or response_json.get("start", {}).get("date")
+    if start_dt and _is_in_past(start_dt):
+        logger.warning(f"Refused to create past {item_type}: start={start_dt}")
+        return CalendarResponse(
+            success=False,
+            message=f"Cannot create a {item_type} in the past (start: {start_dt}). Please provide a future date and time.",
+            calendar_link=None
+        )
+
     # UI-supplied reminders take precedence over LLM-extracted reminders
     if reminders_override is not None:
         response_json["reminders"] = reminders_override
@@ -542,6 +574,15 @@ def create_annual_event(credentials, calendar_id, description: str) -> CalendarR
     summary = details["summary"]
     date_str = details["date"]  # YYYY-MM-DD
     event_type = details["event_type"]  # "birthday" or "anniversary"
+
+    # Reject annual events whose first occurrence is in the past
+    if _is_in_past(date_str):
+        logger.warning(f"Refused to create past annual event: date={date_str}")
+        return CalendarResponse(
+            success=False,
+            message=f"Cannot create \"{summary}\" with a date in the past ({date_str}). Please provide a future date.",
+            calendar_link=None
+        )
 
     # All-day events require an end date one day after the start
     from datetime import timedelta
@@ -763,6 +804,17 @@ def modify_event(credentials, calendar_id, description: str, reminders_override:
                 dt_str = response_json[field]["dateTime"]
                 date_only = dt_str[:10]  # extract YYYY-MM-DD
                 response_json[field] = {"date": date_only}
+
+    # Reject modifications that would move the event to a past date/time
+    new_start = response_json.get("start", {})
+    new_start_dt = new_start.get("dateTime") or new_start.get("date")
+    if new_start_dt and _is_in_past(new_start_dt):
+        logger.warning(f"Refused to modify event to past time: start={new_start_dt}")
+        return CalendarResponse(
+            success=False,
+            message=f"Cannot reschedule \"{event['summary']}\" to a time in the past ({new_start_dt}). Please provide a future date and time.",
+            calendar_link=None
+        )
 
     # UI-supplied reminders take precedence over LLM-extracted reminders
     if reminders_override is not None:
